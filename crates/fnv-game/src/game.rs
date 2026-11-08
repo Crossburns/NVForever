@@ -4656,6 +4656,10 @@ impl<'a> Game<'a> {
     /// sources"].
     pub fn drink_from(&mut self, actor: FormId, target: FormId) {
         let Some(water) = self.drink_water(target) else { return };
+        // PlayerIsDrinkingPlacedWater (`nvse_showoff5`).
+        if actor == FormId::PLAYER_REF {
+            self.showoff.b5.last_drink = Some(self.time);
+        }
         let (rads, by) = self.entry_point(actor, crate::perks::ADJUST_DRINKING_RADIATION, 1.0);
         if !by.is_empty() {
             let names: Vec<String> = by.iter().map(|a| self.data.name(a.perk)).collect();

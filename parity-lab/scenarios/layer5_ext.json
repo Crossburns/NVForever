@@ -862,6 +862,20 @@
    "tags": ["ext", "jip", "probes", "jip4"]
   },
   {
+   "id": "L5.ext.showoff5",
+   "layer": 5,
+   "description": "ShowOff NVSE batch 5 (#1010; docs/spec-notes/ext-showoff.md section 8): the level-up menu opened by ShowSkillMenu and closed in the same step, the shot switches, fast travel, AP costs, item values, VATS reads and the player's small states; set showoff5 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/showoff5.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/showoff5.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "showoff", "probes", "showoff5"]
+  },
+  {
    "id": "L5.ext.showoff2",
    "layer": 5,
    "description": "ShowOff NVSE batch of 2026-10-30 (#1010; docs/spec-notes/ext-showoff.md §8): equipped weapon checks, crippled limbs, actor value damage and names, ammo names, consume sounds, creature data, cell zones, form checks, ModNumericGameSetting; set showoff2 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",

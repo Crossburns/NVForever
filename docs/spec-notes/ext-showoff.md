@@ -156,3 +156,44 @@ Left unbuilt (73), with the reason:
   PlayerIsDrinkingPlacedWater, GetIsActivationPromptShown, IsPlayerLookingAround,
   GetSpellUsageNumEx, GetVATSTargetable, PlaceAtReticleAlt, RefillPlayerAmmo (deprecated
   for ITR's RefillAmmo), RemoveAllItemsShowOff (its page says its flags are buggy).
+
+## 8. Batch 5, the last 37 (2026-11-08, #1010, `nvse_showoff5.rs`)
+
+From the pages alone [documented], not probed yet: probe set `showoff5`
+(`tools/capture/jip_probes.py`, lab `L5.ext.showoff5`) is written, not run. With it the
+census has no ShowOff function left. Tests: `crates/fnv-game/tests/showoff5.rs`.
+
+| Function (aliases) | NVForever |
+|---|---|
+| GetLevelUpMenuCurrentPage (GetLevelUpMenuPage) | -1 closed, 0 skills, 1 perks: the page the engine's menu reports each frame (`nvse_showoff5::LevelUpAsk`, `nvf_play::levelup::script_asks`) [documented] |
+| SetLevelUpMenuCurrentPage (SetLevelUpMenuPage) `page` | 1 as Continue (which closes the menu when no perk is due), 0 as Back, 2 closes it, each whatever points are left; 0 when closed or already there [documented]. Closing keeps what was allotted [hypothesis] |
+| GetLevelUpMenuPoints `[checkPerks] [checkAssigned]` | the skill points or perks to allot, or allotted; -1 closed [documented] |
+| SetLevelUpMenuCanExitEarly `1/0` | Continue and Done work with points left; 0 does not undo it [documented] |
+| ShowPerkMenu `[numPerks] [title]` | the menu on its perks page alone, Back hidden, no level gained; by default the level's perk (1 at a perk level, else 0, browsing); 0 with no perk to take [documented]; 0 while another menu is open [hypothesis] |
+| ShowSkillMenu (ShowSkillsMenu) `[numSkills] [showDespiteNoPoints] [title]` | the skills page as the last page, the level's points by default; 0 with no points and showDespiteNoPoints 0 [documented] |
+| ShowPauseMenu `[mode]` | the engine opens the pause menu on each call: 1 its load page, 3 its settings; 2 (save) and 4 (help) its main page, NVForever's pause menu having neither [documented: the modes; hypothesis: the fallback] |
+| Get/SetExplosionRefRadius, Get/SetExplosionRefSource | the blast's live reference, placed by the engine for its frame (`Game::explosion_placed`) [documented]. The engine works out who the blast reaches in the frame it places it, so a change reaches later reads only [not built: no script runs in between] |
+| GetProjectileRefIsStuck | a shot that hit something and stays (`ProjState`) [hypothesis: the isStuck flag] |
+| SpawnTracingProjectile | 0 [not built: the engine has no request to fire a bare projectile; follow-up] |
+| SetForceDrawHitscanProjectiles `[forceDraw]`, SetProjectileTracerChanceOverride `[chance]` | whether before / the override before; the engine draws hitscan shots, never or always rolls tracers by them (`nvf_play::combat::shot_switches`) [documented] |
+| GetPCHasScriptedFastTravelOverride, GetPCCanFastTravel | EnableFastTravel 0's bar [hypothesis: that is the override]; the Pip-Boy's checks but the marker's: the bar, the cell's or world's flag, in the air, in combat, hostiles within fHostileActor…Distance, over-encumbered without Long Haul [documented: "the same check"; hypothesis: combat as the player's combat state] |
+| IsActorInvisibleToPlayer, HighlightAdditionalReferenceAlt `[check] [flash]` | Invisibility or Chameleon above 0 and no Improved Detection [documented]; the highlight list is kept, the engine's VATS highlight does not draw it yet [not built: follow-up] |
+| GetNumCombatActorsFromActor `[maxDistance] [flags]` | the caller's combat targets (2) and allies (1), 0 meaning 3; 4 no invisible ones, 8 only detected ones [documented]; an ally fights one of the caller's targets and would not attack the caller [hypothesis] |
+| ForceHitStaggerReaction (ForceHitReaction), ForceRecoilAnim | 1 when the actor has a hit location (and, when asked, no Ignore Crippled Limbs) / a melee or unarmed weapon out [documented; hypothesis for recoil's weapons]; the engine does not play the animations [not built, as ForceWeaponJamAnim §4] |
+| KillAllHostiles `[killer]` | KillActor on each loaded actor hostile to the player [documented; hypothesis: "within range" is the loaded area] |
+| GetCalculatedItemValue `[barter]` | the value at the item's condition (fItemConditionValue…, as the barter menu); with the flag while bartering, the Barter skill's sell or buy multiplier; -1 for no item [documented]; weapon mods and Calculate Buy Price not counted [hypothesis] |
+| GetCalculatedAPCost (GetCalculatedWeaponAttackAPCost) `attack [weapon]` | 0 the weapon's override or its animation type's fActionPointsAttack… setting; 1 the VATS attack's AP or, unarmed, fUpperCutAPCost; 2 unarmed fCrossAPCost [documented]; perks not counted [hypothesis] |
+| GetVATSMaxEngageDistance, GetVATSTargetable | fVATSMaxEngageDistance [documented]; enabled and present, a living actor or a reference VATS may mark (`Game::vats_targetable`) [documented] |
+| ToANSIChar | "" [decision: the keyboard layout is the user's system's, which no game→engine channel carries; owner's 2026-11-08 rule; follow-up] |
+| GetHitLocationLingering | GetHitLocation's last hit, which NVForever keeps already [documented] |
+| PlayerHasNightVisionActive | through a scope with "Scope has NightVision" at night, 20:00 to 6:00 [documented; hypothesis: the hours] |
+| PlayerIsDrinkingPlacedWater | within a second of a drink from placed water [documented; hypothesis: the length] |
+| GetIsActivationPromptShown, IsPlayerLookingAround | a reference under the crosshair within reach and no menu; the player's rotation changed since the last frame and looking not disabled [documented; hypothesis: what counts] |
+| GetSpellUsageNumEx `ingestible` | the usage monitor's count times its magnitude while it lasts; 0 after, as GetSpellUsageNum [documented; hypothesis: NVForever's monitor forgets the count] |
+| PlaceAtReticleAlt `form [count] [min] [max] [health]` | placed where the crosshair points, at least min and at most max along it, at the health given [documented; hypothesis: how the distances bound the point] |
+| RefillPlayerAmmo `count`, RemoveAllItemsShowOff `[flags] [type] [target] [exceptions]` | ITR's RefillAmmo on the player [documented: deprecated for it]; RemoveAllTypedItems with flags 1 keep owners, 2 no messages, 4 the player's quest items, 8 non-playable biped items too (`functions::items::remove_all`) [documented] |
+
+Follow-ups for the engine: a bare-projectile request (SpawnTracingProjectile), the VATS
+highlight list, the stagger and recoil animations on request, the keyboard layout
+(ToANSIChar), and reading back a live explosion's radius and source when a script can run
+between placing it and its damage.

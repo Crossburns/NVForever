@@ -6089,6 +6089,60 @@ SUP3_PROBES = (
 )
 
 
+# showoff5 (writes, session only, each change put back; #1010): ShowOff batch 5
+# (docs/spec-notes/ext-showoff.md §8): the level-up menu opened by ShowSkillMenu and closed
+# again in the same step, the shot switches' reads, fast travel, AP costs, item values,
+# VATS reads and the player's small states, on the player, Doc Mitchell and the 10mm pistol.
+_SO5_HEAD = "ref rP\nref rDoc\nref rObj\nref rInv\nfloat fRes\nfloat fA\nfloat fB\nBegin Function { }\n"
+
+
+def _so5(pid, body, text=False):
+    return (f"showoff5.{pid}", _SO5_HEAD + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+def _so5v(pid, expr, text=False):
+    return _so5(pid, f"SetFunctionValue ({expr})", text)
+
+
+SHOWOFF5_PROBES = (
+    [_so5v("levelup.page.closed", "GetLevelUpMenuCurrentPage"),
+     _so5v("levelup.points.closed", "GetLevelUpMenuPoints"),
+     _so5v("levelup.setpage.closed", "SetLevelUpMenuCurrentPage 1"),
+     # Opened and closed in one step: the page, the points to allot and allotted, the
+     # perks, and what closing returns [hypothesis: the menu reads at once].
+     _so5("levelup.skillmenu", "let fRes := ShowSkillMenu 3\nlet fA := GetLevelUpMenuCurrentPage\nlet fB := GetLevelUpMenuPoints\n"
+          "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" fRes fA fB (GetLevelUpMenuPoints 0 1) (GetLevelUpMenuPoints 1) (SetLevelUpMenuCurrentPage 2))", True),
+     _so5v("levelup.after", "GetLevelUpMenuCurrentPage"),
+     _so5v("hitscan.read", "SetForceDrawHitscanProjectiles"),
+     _so5v("tracer.read", "SetProjectileTracerChanceOverride"),
+     _so5v("travel.override", "GetPCHasScriptedFastTravelOverride"),
+     _so5v("travel.can", "GetPCCanFastTravel"),
+     _so5("ap.pistol", _form("rObj", NF["pistol10"]) + "SetFunctionValue (sv_Construct \"%g %g %g\" (GetCalculatedAPCost 0 rObj) (GetCalculatedAPCost 1 rObj) (GetCalculatedAPCost 2 rObj))", True),
+     # Fists (no weapon override): the unarmed costs, the uppercut and the cross.
+     _so5("ap.fists", _form("rObj", "1F4") + "SetFunctionValue (sv_Construct \"%g %g %g\" (GetCalculatedAPCost 0 rObj) (GetCalculatedAPCost 1 rObj) (GetCalculatedAPCost 2 rObj))", True),
+     _so5v("vats.engage", "GetVATSMaxEngageDistance"),
+     _so5v("vats.target.doc", "rDoc.GetVATSTargetable"),
+     _so5v("vats.target.player", "rP.GetVATSTargetable"),
+     # The keyboard layout: "q" or "Q" [hypothesis: NVForever returns "" without the layout].
+     _so5v("ansi.16", "ToANSIChar 16 1", True),
+     _so5v("ansi.2", "ToANSIChar 2 1", True),
+     _so5v("invisible.doc", "rDoc.IsActorInvisibleToPlayer"),
+     _so5v("combatactors.player", "rP.GetNumCombatActorsFromActor"),
+     _so5v("hitlocation.player", "rP.GetHitLocationLingering"),
+     _so5v("nightvision", "PlayerHasNightVisionActive"),
+     _so5v("drinking", "PlayerIsDrinkingPlacedWater"),
+     _so5v("prompt", "GetIsActivationPromptShown"),
+     _so5v("looking", "IsPlayerLookingAround"),
+     _so5("usage.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (rP.GetSpellUsageNumEx rObj)"),
+     # A placed 10mm pistol's value at its condition; with the barter flag outside barter.
+     _so5("itemvalue.pistol", _form("rObj", NF["pistol10"]) + "let rInv := rP.PlaceAtMe rObj 1\nlet fA := rInv.GetCalculatedItemValue\nlet fB := rInv.GetCalculatedItemValue 1\nrInv.Disable\nrInv.MarkForDelete\n"
+          "SetFunctionValue (sv_Construct \"%g %g\" fA fB)", True),
+     _so5v("explosion.none", "rP.GetExplosionRefRadius"),
+     _so5v("stuck.none", "rP.GetProjectileRefIsStuck"),
+     _so5("stagger.player", "SetFunctionValue (rP.ForceHitStaggerReaction)"),
+     _so5("recoil.player", "SetFunctionValue (rP.ForceRecoilAnim)")]
+)
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -6152,6 +6206,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "rules1": RULES1_PROBES,
         "rules2": RULES2_PROBES,
         "showoff2": SHOWOFF2_PROBES,
+        "showoff5": SHOWOFF5_PROBES,
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
@@ -6169,7 +6224,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "showoff5", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):

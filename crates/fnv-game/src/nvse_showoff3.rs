@@ -197,6 +197,7 @@ impl Game<'_> {
     /// its owner and the time since the last update, 1 for a timer counting frames
     /// (no flag 4) [documented: SetOnAuxTimerUpdateHandler; AuxTimerStart's flags].
     pub(crate) fn aux_timer_updates(&mut self) {
+        self.showoff5_tick();
         let now = self.time;
         let dt = now - self.showoff.last_update.unwrap_or(now);
         self.showoff.last_update = Some(now);
