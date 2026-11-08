@@ -145,11 +145,11 @@ NVForever's own [design, #1452]:
 - **The INI keeps the Xbox names** (`[Controller] Jump=Y`) whatever the style, so every
   existing NVForever.ini keeps loading and an INI does not change when the pad does;
   the rebinding log names them so too.
-- **Glyphs**: NVForever draws its own Cross, Circle, Square and Triangle: outlines
-  computed at start into small pictures (`pad::Glyph`, nothing from the game's or Sony's
-  art). The crosshair prompt shows the glyph and ")" in place of "Cross)"; the menu hints,
-  drawn with the game's fonts, which have no such symbols, write the names. L1 … R3,
-  Select and Start are text everywhere.
+- **Glyphs**: NVForever draws its own Cross, Circle, Square and Triangle — a solid cross
+  and three ring outlines — computed at start into small pictures (`pad::Glyph`, nothing
+  from the game's or Sony's art). The crosshair prompt shows the glyph and ")" in place of
+  "Cross)"; the menu hints, drawn with the game's fonts, which have no such symbols, write
+  the names. L1 … R3, Select and Start are text everywhere.
 
 ## 4. Rumble
 
