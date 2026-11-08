@@ -788,12 +788,15 @@ pub struct Steal {
     /// The player's and the victim's Sneak.
     pub thief: f64,
     pub target: f64,
+    /// Equipped items are listed too (ShowOff's SetPlayerCanPickpocketEquippedItems,
+    /// `fnv_game::Game::pickpocket_worn`).
+    pub worn: bool,
     rng: fnv_combat::rng::SplitMix,
 }
 
 impl Steal {
     pub fn new(victim: FormId, rules: fnv_game::pickpocket::Rules, thief: f64, target: f64, seed: u64) -> Steal {
-        Steal { victim, rules, thief, target, rng: fnv_combat::rng::SplitMix(seed) }
+        Steal { victim, rules, thief, target, worn: false, rng: fnv_combat::rng::SplitMix(seed) }
     }
 
     /// The chance, percent, of moving `count` units of `row` either way.
@@ -936,7 +939,7 @@ impl MenuModel {
                 let all = l.rows.len();
                 l.rows.retain(|r| self.category[side as usize].holds_item(r.kind, forms.item(r.item)));
                 self.filtered[side as usize] = all - l.rows.len();
-                if side == Side::Container && self.steal.is_some() {
+                if side == Side::Container && self.steal.as_ref().is_some_and(|s| !s.worn) {
                     l.rows.retain(|r| !r.equipped);
                 }
                 if self.mode == Mode::Inventory && self.category[side as usize] == Category::Misc {
