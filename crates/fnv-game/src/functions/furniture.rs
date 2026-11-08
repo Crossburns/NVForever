@@ -16,6 +16,14 @@ impl Game<'_> {
         self.extra.entry(actor).or_default().furniture = using;
     }
 
+    /// Whether an actor other than `actor` is on (or getting on or off) the furniture
+    /// `reference`: the player or any actor the engine seats, not only the AI's own
+    /// (`fnv_ai`'s kept furniture). A seat the player took is not free for a Find or Use
+    /// Item At package (the G.O.A.T., CG03: Paul went to the desk the player sat at).
+    pub fn furniture_used_by_other(&self, actor: FormId, reference: FormId) -> bool {
+        self.extra.iter().any(|(a, e)| *a != actor && e.furniture.is_some_and(|u| u.reference == reference))
+    }
+
     pub fn furniture_use(&self, actor: FormId) -> Option<FurnitureUse> {
         self.extra.get(&actor).and_then(|e| e.furniture)
     }

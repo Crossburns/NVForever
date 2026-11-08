@@ -445,8 +445,13 @@ normal package behavior"]:
     idles) [observed: `fnvtool ai show`, TTW 3.4 load order]. Before, Amata and Wally both
     went to Christine Kendall's desk and Butch and Paul to Susie Mack's, each pair beside
     one already seated ("cannot use …: in use"), and only three students sat [observed in
-    ours]. The 16 Find packages of the New Vegas masters that look for furniture follow
-    the same rule;
+    ours]. Furniture the player or any other actor the engine seats is on is not free
+    either (`Game::furniture_used_by_other`, also for Use Item At): the player has no
+    desk of their own in the data (eight desks, seven students; the classroom trigger
+    `CG03ClassroomTriggerSCRIPT` sets stage 50 once the player sits and stage 60, the
+    test, only once all seven students report `GetSitting` 3), and Paul went to the desk
+    the player sat at and stood by it, so the test never began [observed in ours]. The 16
+    Find packages of the New Vegas masters that look for furniture follow the same rule;
   - a dead actor carrying what it looks for: it takes one from the body;
   - **Allow Killing**: it attacks a living actor it looks for, or one carrying what it
     looks for (the geckos' and stalkers' "Find Food" packages with object type Food and

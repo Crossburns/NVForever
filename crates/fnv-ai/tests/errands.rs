@@ -700,6 +700,19 @@ fn two_finders_of_furniture_take_a_chair_each() {
     assert!(a.iter().all(|x| !b.contains(x)), "both went for one chair: {a:?} {b:?}");
 }
 
+/// A chair the player sits on is not free for a Find package: the actor takes the other
+/// one (the G.O.A.T.: Paul went to the desk the player sat at, and the test never began).
+#[test]
+fn a_finder_of_furniture_passes_over_the_chair_the_player_sits_on() {
+    use fnv_game::game::FurnitureUse;
+    let f = fixture();
+    let mut s = sim(&f, &[R_CHAIR_FINDER]);
+    s.game.set_furniture_use(FormId::PLAYER_REF, Some(FurnitureUse { reference: FormId(R_CHAIR), marker_id: 0, state: 3 }));
+    s.run(15.0);
+    assert!(!s.events(R_CHAIR_FINDER).iter().any(|e| matches!(e, AiEvent::FindGoes { object, .. } if object.0 == R_CHAIR)), "{:?}", s.events(R_CHAIR_FINDER));
+    assert_eq!(s.ai.agents[&FormId(R_CHAIR_FINDER)].using, Some(FormId(R_CHAIR_FAR)));
+}
+
 struct NoChair;
 
 impl FurnitureFacts for NoChair {
