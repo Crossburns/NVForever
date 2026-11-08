@@ -156,21 +156,24 @@ named as missing for 29 of the 53: the map marker and radio data of a placed ref
 (`fnv_sim::refs::PlacedRef::map_marker`, `::radio`, decoded from REFR XMRK/FNAM/TNAM and
 XRDO by the schema's layout), the hotkeys' unit data, the INI writers through NVForever's
 file layer, and the plugins that hold a form (`GameData::form_overrides`). From the pages
-and the records [documented], not probed: probe set `lu2` (`tools/capture/jip_probes.py`,
-lab `L5.ext.lu2`) is written, not run. Tests: `crates/fnv-game/tests/lutana2.rs`.
+and the records [documented]. Probe set `lu2` (`tools/capture/jip_probes.py`, lab
+`L5.ext.lu2`) ran in the original on 2026-11-08 (save nvfairport, JIP LN 57.30, which
+carries Lutana's functions; private golden `lu2`): its 9 compiled rows all equal after the
+XRDO fix below; the 6 the game refused are rewritten (below) and wait for the next run.
+Tests: `crates/fnv-game/tests/lutana2.rs`.
 
 | Function | NVForever |
 |---|---|
 | IsMapMarker, GetMapMarkerHidden, GetMapMarkerTravel, GetMapMarkerType | a reference with XMRK; FNAM 4 "Show All" Hidden, 2 Can Travel To; TNAM's type, 0 None … 14 Vault [documented: the pages' tables; xEdit REFR] |
 | SetMapMarkerHidden, SetMapMarkerTravel, SetMapMarkerVisible, SetMapMarkerType | the flag (1 Visible) or type for the session (`Game::marker_flags`, `::marker_kind`); the Pip-Boy map's fast-travel check reads the flags as set (`pipboy::data::travel::travel_target`) [documented]. The map's icons and its visibility test still read the record [not built: follow-up]. The page's "permanent state" after ShowMap is not kept: nothing is saved [hypothesis] |
-| IsRadioRef, GetRadioBroadcastType, GetRadioRadius, GetRadioStatic, GetRadioPosRef and the four setters | XRDO: the range type 0 Radius … 4 Current Cell, the radius, the static percentage, the exterior position reference; set for the session, GetAvailableRadios' copy too (`nvse_gaps::RadioSite`) [documented]. The engine's radio plays from the record [not built: follow-up] |
+| IsRadioRef, GetRadioBroadcastType, GetRadioRadius, GetRadioStatic, GetRadioPosRef and the four setters | XRDO: the range type 0 Radius … 4 Current Cell, the radius, the static percentage, the exterior position reference; set for the session, GetAvailableRadios' copy too (`nvse_gaps::RadioSite`) [documented]. RNVTARef reads 1, Everywhere, as the page's example [observed 2026-11-08]; the decoder gives a range type the schema names as its name, read back to the number (`fnv_sim::refs::broadcast_range_code`; it read 0 before). The pages' AlienRadioBeaconREF is FO3's: FalloutNV.esm has the TACT AlienRadioBeacon but no reference by that name, so the game's compiler and NVForever's both refused the five rows naming it [observed 2026-11-08]; they now read Camp Guardian's radio, NVCGRadioREF. GetRadioPosRef is registered with no return type (the game's nvse.log, RegisterCommand), so its result goes through `set` before GetFormIDString (as GetCurrentFurnitureRef, ext-jg6.md). The engine's radio plays from the record [not built: follow-up] |
 | ClearAllHotkeys, SetHotkey `index item health mods` | the eight keys cleared; SetHotkeyItem with the unit's health and mod flags kept beside it [documented]; an item the player carries [hypothesis, as SetHotkeyItem] |
 | SaveHotkeys, RestoreHotkeys `array` | an array of eight [item, health, mods] lists and back [documented: deprecated, "returns an array that can be passed to RestoreHotkeys"; hypothesis: the layout] |
 | SetINISection `section map [file]`, RemoveINIKey `Section:Key [file]`, RemoveINISection `section [file]` | under `Data\Config` in NVForever's layer (`mod_files.rs`), the calling mod's file by default, numbers as LU writes them; a missing key or section writes nothing [documented; hypothesis for the last] |
 | IsSkillMagazine `ingestible` | an effect with a condition HasPerk Retention or Comprehension, the perks found by Editor ID [documented] |
 | SetIngestibleFlag `ingestible flag value` | 2 Food, 4 Medicine on ENIT for the session; GetIngestibleFlag and the Medicine and Survival boosts read it (`Game::ingest_on`) [documented]; the vendors' categories read the record [not built] |
 | GetShowQuestItems | SetShowQuestItems' switch, on by default [documented]; SetShowQuestItems runs by name in `nvse_lu2` (scripts compiled from text); it is not registered by opcode, as functions.json has none for it (only command_opcodes.json records 0x114E [observed], and the catalogue takes opcodes only from the masters' bytecode or xEdit); the engine's inventory lists quest items either way [not built] |
-| GetFormCountType `array type` | the forms of the array of that GetType code [documented] |
+| GetFormCountType `array type` | the forms of the array of that GetType code [documented]. The first parameter is the array's ID as an integer since JIP v40 [documented: the page], so an array variable passes it, as the page's example, but an array expression in its place, `GetFormCountType (ar_List …) 47`, did not compile in the original [observed 2026-11-08]. NVForever's compiler does not check extender argument types and compiles both; the function takes the ID as an array or a number |
 | GetFormMods `form` | the plugins defining or overriding it, in load order [documented: the example] |
 
 Left for batch 3 (24): appearance and base swaps (CopyFaceGenFrom, SetRace, SetBaseForm,

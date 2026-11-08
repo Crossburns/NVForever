@@ -41,7 +41,7 @@ fn fixture() -> Fixture {
         MARKER,
         &[sub(b"EDID", z("TestMarkerRef")), sub(b"NAME", STAT.to_le_bytes().to_vec()), sub(b"XMRK", vec![]), sub(b"FNAM", vec![1 | 2]), sub(b"FULL", z("Test Place")), sub(b"TNAM", vec![5, 0]), sub(b"DATA", vec![0; 24])],
     );
-    let xrdo = [6000f32.to_le_bytes(), 0u32.to_le_bytes(), 15f32.to_le_bytes(), 0u32.to_le_bytes()].concat();
+    let xrdo = [6000f32.to_le_bytes(), 2u32.to_le_bytes(), 15f32.to_le_bytes(), 0u32.to_le_bytes()].concat();
     let radio = record(b"REFR", 0, RADIO, &[sub(b"EDID", z("TestRadioRef")), sub(b"NAME", TACT.to_le_bytes().to_vec()), sub(b"XRDO", xrdo), sub(b"DATA", vec![0; 24])]);
     let children = group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &[marker, radio].concat()));
     let bytes = [
@@ -103,7 +103,9 @@ fn map_markers_and_radio_stations_from_their_data() {
     assert_eq!(n(&mut g, "TestRadioRef.IsRadioRef"), 1.0);
     assert_eq!(n(&mut g, "TestRadioRef.GetRadioRadius"), 6000.0);
     assert_eq!(n(&mut g, "TestRadioRef.GetRadioStatic"), 15.0);
-    assert_eq!(n(&mut g, "TestRadioRef.GetRadioBroadcastType"), 0.0);
+    // A range type the schema names (2, Worldspace and Linked Interiors) reads as its
+    // number, as RNVTARef's Everywhere read 1 in the original [observed 2026-11-08].
+    assert_eq!(n(&mut g, "TestRadioRef.GetRadioBroadcastType"), 2.0);
     q(&mut g, "TestRadioRef.SetRadioRadius 2000");
     q(&mut g, "TestRadioRef.SetRadioBroadcastType 1");
     q(&mut g, "TestRadioRef.SetRadioPosRef TestMarkerRef");
@@ -139,6 +141,8 @@ fn hotkeys_ini_writers_and_forms() {
     q(&mut g, "SetShowQuestItems 0");
     assert_eq!(n(&mut g, "GetShowQuestItems"), 0.0);
     assert_eq!(n(&mut g, "GetFormCountType (ar_List TestFood TestStatic TestFood) 47"), 2.0, "ALCH is type 47");
+    // The array's ID from an array variable, as the page's example and the probe.
+    assert_eq!(n(&mut g, "array_var aF\nfloat fN\nlet aF := ar_List TestFood, TestStatic\nlet fN := GetFormCountType aF, 47\nSetFunctionValue fN"), 1.0);
     assert_eq!(
         q(&mut g, "array_var a\nlet a := GetFormMods TestFood\nSetFunctionValue a[0]"),
         XVal::Str("Lutana2Test.esm".into())

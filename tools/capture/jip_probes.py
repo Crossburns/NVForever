@@ -6091,10 +6091,12 @@ SUP3_PROBES = (
 
 # lu2 (writes, session only, each change put back; #1009): Lutana batch 2
 # (docs/spec-notes/ext-lutana.md §9) through JIP LN: radio data of the pages' own
-# references (RNVTARef, AlienRadioBeaconREF), skill magazines, the quest items switch,
-# form counts by type, the plugins of Scotch, and SetIngestibleFlag on the page's
-# Jalapeno, put back.
-_LU2_HEAD = "ref rP\nref rObj\narray_var aR\nfloat fRes\nfloat fA\nBegin Function { }\n"
+# references (RNVTARef; AlienRadioBeaconREF is FO3's and not in FalloutNV.esm, so the
+# radius rows read Camp Guardian's NVCGRadioREF 13D7A2 instead [observed: fnvtool esm
+# decode, XRDO radius 5000, Radius, static 50, position reference 14ADB9]), skill
+# magazines, the quest items switch, form counts by type, the plugins of Scotch, and
+# SetIngestibleFlag on the page's Jalapeno, put back.
+_LU2_HEAD = "ref rP\nref rObj\nref rOther\narray_var aR\nfloat fRes\nfloat fA\nBegin Function { }\n"
 
 
 def _lu2(pid, body, text=False):
@@ -6108,17 +6110,22 @@ def _lu2v(pid, expr, text=False):
 LU2_PROBES = (
     [_lu2v("radio.rnv.is", "RNVTARef.IsRadioRef"),
      _lu2v("radio.rnv.type", "RNVTARef.GetRadioBroadcastType"),
-     _lu2v("radio.beacon.radius", "AlienRadioBeaconREF.GetRadioRadius"),
-     _lu2v("radio.beacon.static", "AlienRadioBeaconREF.GetRadioStatic"),
-     _lu2v("radio.beacon.type", "AlienRadioBeaconREF.GetRadioBroadcastType"),
-     _lu2v("radio.beacon.posref", "GetFormIDString (AlienRadioBeaconREF.GetRadioPosRef)", True),
+     # The AlienRadioBeaconREF rows (the pages' FO3 example) did not compile in the original
+     # nor here: no such editor ID in the load order [observed 2026-11-08].
+     _lu2("radio.cg.radius", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioRadius)"),
+     _lu2("radio.cg.static", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioStatic)"),
+     _lu2("radio.cg.type", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioBroadcastType)"),
+     # GetRadioPosRef is registered with no return type (nvse.log), so `set` takes it first
+     _lu2("radio.cg.posref", _form("rObj", "13D7A2") + "set rOther to rObj.GetRadioPosRef\nSetFunctionValue (GetFormIDString rOther)", True),
      _lu2v("radio.player.is", "rP.IsRadioRef"),
-     _lu2("radio.beacon.set", "AlienRadioBeaconREF.SetRadioRadius 2000\nlet fRes := AlienRadioBeaconREF.GetRadioRadius\nAlienRadioBeaconREF.SetRadioRadius 6000\nSetFunctionValue fRes"),
+     _lu2("radio.cg.set", _form("rObj", "13D7A2") + "rObj.SetRadioRadius 2000\nlet fRes := rObj.GetRadioRadius\nrObj.SetRadioRadius 5000\nSetFunctionValue fRes"),
      _lu2v("marker.player", "rP.IsMapMarker"),
      _lu2v("magazine.explosives", "IsSkillMagazine MagazineNVExplosives"),
      _lu2("magazine.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (IsSkillMagazine rObj)"),
      _lu2v("questitems", "GetShowQuestItems"),
-     _lu2("formcount.alch", _form("rObj", NF["stimpak"]) + "SetFunctionValue (GetFormCountType (ar_List rObj, rObj, rP) 47)"),
+     # GetFormCountType takes the array's ID (an integer since JIP v40, the page): an array
+     # variable as the page's example; `(ar_List …)` in its place did not compile [observed 2026-11-08]
+     _lu2("formcount.alch", _form("rObj", NF["stimpak"]) + "let aR := ar_List rObj, rObj, rP\nlet fRes := GetFormCountType aR, 47\nSetFunctionValue fRes"),
      _lu2("formmods.scotch", "let aR := GetFormMods Scotch\nSetFunctionValue (sv_Construct \"%g %z\" (ar_Size aR) (aR[0]))", True),
      _lu2("ingestible.food", "let fRes := GetIngestibleFlag JalapenoPepper 2\nSetIngestibleFlag JalapenoPepper 2 0\nlet fA := GetIngestibleFlag JalapenoPepper 2\n"
           "SetIngestibleFlag JalapenoPepper 2 1\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes fA (GetIngestibleFlag JalapenoPepper 2))", True)]

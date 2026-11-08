@@ -452,12 +452,22 @@ fn field_fid(
     }
 }
 
-/// A decoded boolean enum (`BoolU8`: "True" / "False", or its number).
-/// A decoded number, flags or enum value as its number (`{"value": n, …}` or `n`).
+/// A decoded number or flags value as its number (`{"value": n, …}` or `n`).
 fn code(v: &serde_json::Value) -> Option<u64> {
     v.as_u64().or_else(|| v.get("value").and_then(serde_json::Value::as_u64))
 }
 
+/// XRDO's broadcast range type as its number: the decoder gives a known value as the
+/// schema's name for it (schemas/fnv/world.json XRDO), an unknown one as the number.
+fn broadcast_range_code(v: &serde_json::Value) -> Option<u64> {
+    const NAMES: [&str; 5] = ["Radius", "Everywhere", "Worldspace and Linked Interiors", "Linked Interiors", "Current Cell Only"];
+    match v.as_str() {
+        Some(name) => NAMES.iter().position(|n| *n == name).map(|i| i as u64),
+        None => code(v),
+    }
+}
+
+/// A decoded boolean enum (`BoolU8`: "True" / "False", or its number).
 fn truthy(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Bool(b) => *b,
@@ -590,7 +600,7 @@ fn load_ref(
         }),
         radio: first(&d, b"XRDO").map(|v| RadioData {
             radius: num(v, "range_radius").unwrap_or(0.0) as f32,
-            range: v.get("broadcast_range_type").and_then(code).unwrap_or(0) as u32,
+            range: v.get("broadcast_range_type").and_then(broadcast_range_code).unwrap_or(0) as u32,
             static_percent: num(v, "static_percentage").unwrap_or(0.0) as f32,
             position_ref: fid(v.get("position_reference"), "XRDO", issues),
         }),

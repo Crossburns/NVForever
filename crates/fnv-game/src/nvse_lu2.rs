@@ -229,11 +229,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // `array type`: how many forms of the array have that form type (GetType's codes)
-        // [documented: GetFormCountType].
+        // [documented: GetFormCountType]. Since JIP v40 the first parameter is the array's
+        // ID as an integer [documented: the page]: an array variable passes it, an array
+        // expression in its place did not compile in the original [observed 2026-11-08:
+        // lu2.formcount.alch with `(ar_List …)`], so the ID may come as a number.
         "getformcounttype" => {
-            let Some(XVal::Array(id)) = args.first() else { return Some(Ok(zero)) };
+            let id = match args.first() {
+                Some(XVal::Array(id)) => *id,
+                Some(XVal::Num(x)) if *x >= 0.0 => *x as u32,
+                _ => return Some(Ok(zero)),
+            };
             let want = num(args, 1, -1.0) as i32;
-            let forms: Vec<FormId> = g.ext.array(*id).map(|a| a.entries.iter().filter_map(|(_, v)| if let XVal::Ref(r) = v { Some(FormId(*r)) } else { None }).collect()).unwrap_or_default();
+            let forms: Vec<FormId> = g.ext.array(id).map(|a| a.entries.iter().filter_map(|(_, v)| if let XVal::Ref(r) = v { Some(FormId(*r)) } else { None }).collect()).unwrap_or_default();
             let n = forms.into_iter().filter(|&f| g.data.sig(f).as_ref().and_then(crate::functions::items::form_type_code) == Some(want));
             XVal::Num(n.count() as f64)
         }
