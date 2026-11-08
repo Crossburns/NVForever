@@ -1355,8 +1355,15 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
   template (LGTM, `DATA` = the same ten fields, 40 bytes [documented; observed: all 40
   LGTM records decode exactly]) and `LNAM` holds "inherit" flags, one per field
   [documented]. The renderer takes a field from the template when its bit is set
-  [hypothesis]. The two rotation angles are read as azimuth about z and elevation, in
-  degrees [hypothesis].
+  [hypothesis]. The two rotation angles are read as azimuth about z and pitch, in
+  degrees, giving the direction the light shines in [hypothesis]. Of the 31 LGTM
+  templates in FalloutNV.esm, 22 store pitch 270 (every "Default" template among them:
+  caves, basement, office, shack, wasteland) and the rest 220-278 [observed]; of 388
+  CELL records with their own XCLL, 140 store 270, 121 store 0 (all with azimuth 0) and
+  45 store 250 [observed]. Read as the direction towards the light, 270 put it beneath
+  the floor and cast ceiling fixtures' shadows onto the ceiling (#1645, GSGasStation:
+  azimuth 180, pitch 250) [observed: renderer]. Where the azimuth's zero lies and which
+  way it turns is not known [hypothesis].
 - **Lights (LIGH DATA)**: time i32, radius u32, colour (RGBA bytes), flags u32
   (dynamic, can be carried, negative, flicker, off by default, flicker slow, pulse,
   pulse slow, spot, spot shadow, ...), falloff exponent f32, FOV f32, value u32, weight

@@ -1248,6 +1248,8 @@ pub struct Game<'a> {
     pub scene: crate::nif_blocks::SceneMirror,
     /// The xNVSE "other" functions' and the control locks' session state.
     pub other: crate::nvse_other::OtherState,
+    /// Scripts' edits to topics and lines for the session (`crate::dialogue_edits`).
+    pub dialogue_edits: crate::dialogue_edits::DialogueEdits,
     /// The 1111 NVSE plugin's condition lists, weapon stat vectors and damage event
     /// (`crate::nvse_one111`).
     pub one111: crate::nvse_one111::One111State,
@@ -2044,6 +2046,8 @@ pub struct Session {
     sr_registered: Vec<String>,
     /// JIP's session settings (ash-pile activators, terminal art).
     jip_kept: crate::jip_events::JipKept,
+    /// The dialogue records scripts changed (`crate::dialogue_edits`).
+    dialogue_edits: crate::dialogue_edits::DialogueEdits,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -2159,6 +2163,7 @@ impl<'a> Game<'a> {
             jip_flags: std::collections::HashSet::new(),
             box_callback: None,
             other: Default::default(),
+            dialogue_edits: Default::default(),
             one111: Default::default(),
             ini: Default::default(),
             pp: Default::default(),
@@ -3127,7 +3132,7 @@ impl<'a> Game<'a> {
             .collect();
         let pp = self.pp_take_session();
         let sr_registered = self.sr.take_registered();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept) }
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session() }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3140,6 +3145,7 @@ impl<'a> Game<'a> {
         self.other.itr.kept = s.itr_kept;
         self.sr.put_registered(s.sr_registered);
         self.jip.kept = s.jip_kept;
+        self.dialogue_edits = s.dialogue_edits;
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
@@ -4114,7 +4120,8 @@ impl<'a> Game<'a> {
     /// between actors lasts as long as its first response.
     pub(crate) fn say_line(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, info: FormId, kind: LineKind) {
         let data = self.data;
-        let Some(def) = data.infos.get(&info) else { return };
+        let dv = self.dialogue_view();
+        let Some(def) = dv.info(&info) else { return };
         self.cut_line(speaker);
         self.mark_said(speaker, info, false);
         let conversation = match kind {
@@ -4148,7 +4155,7 @@ impl<'a> Game<'a> {
     /// the time of each passes: the idles of a response that starts are asked for
     /// (`crate::idles`; the first response's when the line starts).
     fn speech_responses(&mut self) {
-        let data = self.data;
+        let dv = self.dialogue_view();
         let mut started = Vec::new();
         for k in 0..self.speech.len() {
             let s = &self.speech[k];
@@ -4156,7 +4163,7 @@ impl<'a> Game<'a> {
             if s.conversation.is_some() {
                 continue;
             }
-            let Some(def) = data.infos.get(&s.info) else { continue };
+            let Some(def) = dv.info(&s.info) else { continue };
             let order = def.response_order();
             if order.len() < 2 {
                 continue;
@@ -4271,13 +4278,14 @@ impl<'a> Game<'a> {
     /// its speaker, then what follows the kind of line ([`Game::update_speech`]).
     fn end_line(&mut self, k: usize) {
         let data = self.data;
+        let dv = self.dialogue_view();
         let s = self.speech.remove(k);
         let (speaker, info) = (s.speaker, s.info);
         self.emit(EventKind::LineEnded { speaker, info, cut: false });
         // The force greet this line's end script holds, if it is a farewell
         // (`Game::hold_force_greet`).
         let mut then = None;
-        if let Some(def) = data.infos.get(&info) {
+        if let Some(def) = dv.info(&info) {
             if let Some(u) = def.end.filter(|_| !s.end_ran) {
                 self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
                 // A farewell's end script may ask for the next conversation. The state is
@@ -4703,7 +4711,8 @@ impl<'a> Game<'a> {
     /// a line would not be said. Returns whether the conditions passed.
     pub fn run_info(&mut self, info: FormId, speaker: Option<FormId>, force: bool) -> Result<bool, String> {
         let data = self.data;
-        let def = data.infos.get(&info).ok_or_else(|| format!("{info} is not a dialogue line (INFO)"))?;
+        let dv = self.dialogue_view();
+        let def = dv.info(&info).ok_or_else(|| format!("{info} is not a dialogue line (INFO)"))?;
         let speaker = speaker.or(def.speaker);
         let pass = self.conditions_pass(&def.conditions, speaker, Some(FormId::PLAYER_REF), &format!("INFO {info}"));
         if !pass && !force {
@@ -4732,6 +4741,7 @@ impl<'a> Game<'a> {
     /// [hypothesis: the tape plays the line it began].
     pub fn holotape_script(&mut self, note: FormId, which: usize) -> Option<FormId> {
         let data = self.data;
+        let dv = self.dialogue_view();
         let started = self.tape_playing.take().filter(|&(n, _)| n == note && which == 1).map(|(_, i)| i);
         let info = match started {
             Some(i) => i,
@@ -4743,7 +4753,7 @@ impl<'a> Game<'a> {
         if which == 0 {
             self.tape_playing = Some((note, info));
         }
-        let def = data.infos.get(&info)?;
+        let def = dv.info(&info)?;
         if let Some(u) = [def.begin, def.end][which.min(1)] {
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(FormId::PLAYER_REF) });
             self.run_result(u, RunCtx { self_ref: Some(FormId::PLAYER_REF), action_ref: None, quest: def.quest });

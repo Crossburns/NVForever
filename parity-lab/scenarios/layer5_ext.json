@@ -904,6 +904,20 @@
    "tags": ["ext", "johnnyguitar", "probes", "jg2"]
   },
   {
+   "id": "L5.ext.sup2",
+   "layer": 5,
+   "description": "SUP NVSE batch 2 (#1008; docs/spec-notes/ext-sup2.md): the dialogue setters of SUP with JohnnyGuitar's related topics and said-once functions, ShowOff's response texts and ITR's info flags, on Sunny Smiles's lines; set sup2 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/sup2.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/sup2.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "sup", "probes", "sup2"]
+  },
+  {
    "id": "L5.ext.jipppln",
    "layer": 5,
    "description": "JIP++ (JIP PP LN, #1019; docs/spec-notes/ext-jippp.md): runtime node lists (HasRuntimeNode, CopyRuntimeNodes, ClearRuntimeNodes, AttachFormModel), weapon degradation, control codes, active effects, ClampToGround and RefreshInventoryWeight; set jipppln of tools/capture/jip_probes.py, captured with JIP++ swapped in for base JIP LN for the run only, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
