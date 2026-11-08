@@ -279,7 +279,9 @@ pub(crate) fn find_target(
             .entry(id)
             .or_insert_with(|| {
                 // A body culled by its critical stage (turned to ash or goo) is gone.
-                if rt.as_deref().is_some_and(|rt| rt.game.activation_refused(FormId(id)) || rt.game.culled(FormId(id))) {
+                // Nor a form type or reference scripts closed to the player
+                // (SetInteractionDisabledType, SetInteractionDisabled).
+                if rt.as_deref().is_some_and(|rt| rt.game.activation_refused(FormId(id)) || rt.game.culled(FormId(id)) || rt.game.player_interaction_disabled(FormId(id))) {
                     return None;
                 }
                 let pile = rt.as_deref().is_some_and(|rt| rt.game.ash_pile_source(FormId(id)).is_some());

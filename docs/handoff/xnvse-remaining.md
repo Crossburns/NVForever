@@ -142,6 +142,12 @@ probed, lab L5.ext.jg5 88 of 88).
 Census after it: 649 (JohnnyGuitar 216 → 184).
 With JIP batch 8 merged: 602 (JIP 201, JohnnyGuitar 184) [observed: the extender_census
 test, 2026-11-08].
+JIP batch 9: 23 (#1006, jip-ui-9.md: the HUD cursor, the mouse, vanity wheel and camera
+collision switches, CloseActiveMenu, the hotkeys' inventory references, the Pip-Boy radio,
+the game volumes, SetFontFile, SetSystemColor, the health bar's actor, immortal mode,
+interaction by type, GetPosEx, the NIF block material values and the Alt translation and
+rotation; engine side in `script_switches.rs` and `nif_mirror.rs`; not probed). Census
+after it: 579 (JIP 201 → 178).
 JohnnyGuitar batch 6: 37 (#1007, ext-jg6.md: actor values by code, UnsetAV, life states,
 temporary ingestible effects, available perks, hotkey slots, the owner's trespass alarm,
 visited and expired cells, lighting template cells, the moon phase, radios, talking
