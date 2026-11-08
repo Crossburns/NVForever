@@ -1070,6 +1070,20 @@
    },
    "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
    "tags": ["ext", "pp", "probes"]
+  },
+  {
+   "id": "L5.ext.lutana1",
+   "layer": 5,
+   "description": "Lutana batch 1 (#1009; docs/spec-notes/ext-lutana.md), run through JIP LN: challenge, casino and recipe getters and setters (recipe lists, GetFormRecipes order), actor AI data (services, aggro radius, combat style), perk entries, worldspace, cell water and grid, zone flags, activator sounds and radio, terminal locks and password notes, locked-out states and keys, form flags and playability, weapon fields, load screen types, message time, notes and light radii; set lutana1 of tools/capture/jip_probes.py, keyed by probe id, steps in order; every change put back. The load order puts GunRunnersArsenal.esm after LonesomeRoad.esm, as the original's game did (its forms read 05xxxxxx in the golden). Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/lutana1.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "GunRunnersArsenal.esm", "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/lutana1.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "lutana", "probes", "lutana1"]
   }
  ]
 }
