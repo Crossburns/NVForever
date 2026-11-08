@@ -1139,9 +1139,26 @@ fn init_logging() {
         .init();
 }
 
+/// `@file` in the arguments stands for the lines of that file (one argument each; empty
+/// lines, `#` comments and MO2's `*` enabled marks left out): a long load order, such as
+/// MO2's `plugins.txt`, does not fit on one command line.
+fn expand_lists(args: impl Iterator<Item = std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let mut out = Vec::new();
+    for a in args {
+        let listed = a.to_str().and_then(|s| s.strip_prefix('@')).filter(|f| std::path::Path::new(f).is_file()).and_then(|f| std::fs::read_to_string(f).ok());
+        match listed {
+            Some(text) => out.extend(
+                text.lines().map(|l| l.trim().trim_start_matches('*')).filter(|l| !l.is_empty() && !l.starts_with('#')).map(std::ffi::OsString::from),
+            ),
+            None => out.push(a),
+        }
+    }
+    out
+}
+
 fn main() -> ExitCode {
     crash_report::install();
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(expand_lists(std::env::args_os()));
     init_logging();
     // The code page of the game's text: NVF_CODE_PAGE, else Windows-1252 (#1439).
     match fnv_util::text::chosen(None) {

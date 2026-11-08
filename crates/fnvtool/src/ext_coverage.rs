@@ -72,19 +72,6 @@ fn probe(g: &mut fnv_game::game::Game<'_>, name: &str) -> (&'static str, String)
 }
 
 pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, sources: Option<&Path>) -> anyhow::Result<Value> {
-    // `@file` names a plugin list (one per line, `#` comments and MO2's `*` marks allowed):
-    // a 200-plugin load order does not fit on one command line.
-    let mut plugins = Vec::new();
-    for p in &lo.plugins {
-        match p.strip_prefix('@') {
-            Some(f) => {
-                let text = std::fs::read_to_string(f).with_context(|| f.to_string())?;
-                plugins.extend(text.lines().map(|l| l.trim().trim_start_matches('*')).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string));
-            }
-            None => plugins.push(p.clone()),
-        }
-    }
-    let lo = &LoadOrderArgs { data_dir: lo.data_dir.clone(), plugins };
     // Mods' files as the engine sees them: the Data folder and its archives, read-only.
     let vfs = std::sync::Arc::new(fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins).ok());
     let v2 = vfs.clone();
