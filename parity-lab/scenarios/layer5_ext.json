@@ -1002,6 +1002,20 @@
    "tags": ["ext", "jip", "probes", "jip8"]
   },
   {
+   "id": "L5.ext.jip9",
+   "layer": 5,
+   "description": "JIP LN batch 9 (#1006; docs/spec-notes/jip-ui-9.md): the HUD cursor, mouse, vanity wheel, camera collision and immortal-mode switches, the cursor outside MenuMode, the game volumes, SetFontFile, interaction by type, the hotkeys' inventory references, the Pip-Boy radio, the health bar's actor, GetPosEx and the NIF block translation, rotation and material values on the player; set jip9 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/jip9.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/jip9.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "jip", "probes", "jip9"]
+  },
+  {
    "id": "L5.ext.jg5",
    "layer": 5,
    "description": "JohnnyGuitar batch 5 (#1007; docs/spec-notes/ext-jg5.md): GetRGBColor's packing, GetTimePlayed's units (as ratios), a reference's location name, region map names, armour and weapon alternate textures and their setters' results, actor effect types, a VATS camera shot's traits, body-part strings and equip types; set jg5 of tools/capture/jip_probes.py, keyed by probe id, steps in order. The player's own location name needs travel and is not here. Oracle and candidate as L5.ext.jip.getters.",

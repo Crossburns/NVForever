@@ -5246,6 +5246,87 @@ JIP8_PROBES = (
            "(GetBodyPartReplacementModel rObj 2))", True)]
 )
 
+# jip9 (writes, session only, each switch and value put back; #1006): JIP batch 9
+# (docs/spec-notes/jip-ui-9.md): the switches' states without an argument and after one,
+# put back; the cursor outside MenuMode; the volumes and their defaults; SetFontFile's
+# result; immortal mode; interaction by type; the hotkeys' inventory references; the
+# Pip-Boy radio; the enemy health bar's actor; GetPosEx and the NIF block values in
+# script variables on the player (Bip01 Head, its world place against GetPos; UpperBody,
+# the body shape, for the material values, none of which the batch knows).
+def _j9(pid, body, text=False):
+    return (f"jip9.{pid}", "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\n"
+            "string_var sText\nBegin Function { }\n" + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _j9v(pid, expr):
+    return _j9(pid, f"SetFunctionValue ({expr})")
+
+
+# A switch read, set, read, put back and read again.
+def _j9switch(pid, fn, value):
+    return _j9(pid, f"let fSave := {fn}\nlet fRes := {fn} {value}\nlet fA := {fn}\n{fn} fSave\n"
+               f'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA ({fn}))', True)
+
+
+def _j9xyz(pid, call):
+    return _j9(pid, "let fX := -1\nlet fY := -1\nlet fZ := -1\n" f"let fRes := {call}\n"
+               'SetFunctionValue (sv_Construct "%g %.3f %.3f %.3f" fRes fX fY fZ)', True)
+
+
+JIP9_PROBES = (
+    [_j9switch("hudcursor", "ToggleHUDCursor", 1),
+     _j9switch("mouse.1", "ToggleMouseMovement", 1),
+     _j9switch("mouse.9", "ToggleMouseMovement", 9),
+     _j9switch("vanity", "ToggleVanityWheel", 0),
+     _j9switch("camcoll", "ToggleCameraCollision", 0),
+     _j9switch("immortal.1", "ToggleImmortalMode", 1),
+     _j9switch("immortal.5", "ToggleImmortalMode", 5)]
+    # Outside MenuMode and the HUD cursor [hypothesis: 0].
+    + [_j9v(f"cursor.{a}{x}", f"GetCursorPos {a} {x}") for a in ("X", "Y") for x in (0, 1)]
+    + [_j9v(f"volume.{t}", f"GetGameVolume {t}") for t in range(0, 7)]
+    + [_j9("volume.set", "let fSave := GetGameVolume 4\nSetGameVolume 4 30\nlet fA := GetGameVolume 4\n"
+           "SetGameVolume 4 150\nlet fB := GetGameVolume 4\nSetGameVolume 4\nlet fRes := GetGameVolume 4\n"
+           "SetGameVolume 4 fSave\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g" fSave fA fB fRes (GetGameVolume 4))', True)]
+    + [_j9v("font.set.9", 'SetFontFile 9 "textures\\fonts\\glow_monofonto_large.fnt"'),
+       _j9v("font.set.missing", 'SetFontFile 2 "textures\\fonts\\nvf no such font.fnt"'),
+       _j9("font.get.2", "SetFunctionValue (GetFontFile 2)", True)]
+    + [_j9("interact.type", "let fSave := GetInteractionDisabledType 28\nSetInteractionDisabledType 1 28\n"
+           "let fA := GetInteractionDisabledType 28\nlet fB := GetInteractionDisabledType 21\nSetInteractionDisabledType fSave 28\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fA fB (GetInteractionDisabledType 28))', True)]
+    + [_j9(f"hotkey.{k}", f"let rItem := GetHotkeyItemRef {k}\nlet rObj := GetHotkeyItem {k}\n"
+           'if rItem\nlet sText := GetFormIDString (rItem.GetBaseObject)\nelse\nlet sText := "none"\nendif\n'
+           'SetFunctionValue (sv_Construct "%z %z" sText (GetFormIDString rObj))', True) for k in range(1, 9)]
+    # The same item put on its own key again: the result.
+    + [_j9("hotkey.reset", "let fRes := -1\nlet rItem := GetHotkeyItemRef 1\nif rItem\nlet fRes := rItem.SetHotkeyItemRef 1\nendif\n"
+           "let fA := -1\nif rItem\nlet fA := rItem.SetHotkeyItemRef 2\nendif\n"
+           'SetFunctionValue (sv_Construct "%g %g" fRes fA)', True)]
+    + [_j9("radio", 'let rObj := GetPipboyRadio\nSetFunctionValue (GetFormIDString rObj)', True),
+       _j9("enemytarget", 'let rObj := GetEnemyHealthTarget\nSetFunctionValue (GetFormIDString rObj)', True)]
+    + [_j9xyz("posex", "0\nrP.GetPosEx fX fY fZ"),
+       _j9("posex.getpos", 'SetFunctionValue (sv_Construct "%.3f %.3f %.3f" (rP.GetPos X) (rP.GetPos Y) (rP.GetPos Z))', True)]
+    + [_j9xyz(f"niftrans.head.{w}", f'rP.GetNifBlockTranslationAlt "Bip01 Head" fX fY fZ {w}') for w in (0, 1)]
+    + [_j9xyz(f"nifrot.head.{w}", f'rP.GetNifBlockRotationAlt "Bip01 Head" fX fY fZ {w}') for w in range(0, 4)]
+    + [_j9xyz("niftrans.missing", 'rP.GetNifBlockTranslationAlt "NvfNoSuchBlock" fX fY fZ 1')]
+    # The rows above, with declared script variables for the outputs, did not compile in
+    # the original [observed 2026-11-08]; the same calls with the variables declared
+    # inline, as mods' script-runner files write them (ext-script-runner.md).
+    + [_j9("posex.inline", "rP.GetPosEx (float fP) (float fQ) (float fW)\n"
+           'SetFunctionValue (sv_Construct "%.3f %.3f %.3f" fP fQ fW)', True),
+       _j9("nifrot.head.inline", 'let fRes := rP.GetNifBlockRotationAlt "Bip01 Head" (float fP) (float fQ) (float fW) 0\n'
+           'SetFunctionValue (sv_Construct "%g" fRes)', True)]
+    # GetNifBlockTranslation with an axis, the Fallout 3 plugin's form, did not compile
+    # [observed 2026-11-08: niftrans.head.plain]; JIP's takes getWorld and gives an array.
+    + [_j9v("niftrans.head.array", 'ar_Size (rP.GetNifBlockTranslation "Bip01 Head" 1)')]
+    + [_j9v(f"material.upperbody.{i}", f'rP.GetMaterialPropertyValue "UpperBody" {i}') for i in range(0, 10)]
+    + [_j9("material.set", 'let fSave := rP.GetMaterialPropertyValue "UpperBody" 7\n'
+           'let fRes := rP.SetMaterialPropertyValue "UpperBody" 7 0.5\nlet fA := rP.GetMaterialPropertyValue "UpperBody" 7\n'
+           'rP.SetMaterialPropertyValue "UpperBody" 7 fSave\n'
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (rP.GetMaterialPropertyValue "UpperBody" 7))', True),
+       _j9v("material.missing", 'rP.GetMaterialPropertyValue "NvfNoSuchBlock" 7')]
+)
+
+
 
 # jg5 (writes, session only, each change put back where the plugin allows; #1007):
 # JohnnyGuitar batch 5 (docs/spec-notes/ext-jg5.md) on FalloutNV.esm forms [observed:
@@ -7767,6 +7848,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "one111": ONE111_PROBES,
         "jip5": JIP5_PROBES,
         "jip8": JIP8_PROBES,
+        "jip9": JIP9_PROBES,
         "pp": PP_PROBES,
         "format1": FORMAT1_PROBES,
         "tmpl2": TMPL2_PROBES,
@@ -7778,7 +7860,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5", "jip9"}
 SETS.update({"lutana1": LUTANA1_PROBES})
 WRITING_SETS |= {"lutana1"}
 SETS.update({"jg3": JG3_PROBES, "jg4": JG4_PROBES})

@@ -456,6 +456,18 @@ impl Game<'_> {
         if amount < 0.0 && actor == FormId::PLAYER_REF && self.toggles.god_mode {
             return;
         }
+        // ToggleImmortalMode (`crate::nvse_jip9`): 2 no Health damage, 1 none below 1 HP.
+        let mut amount = amount;
+        if actor == FormId::PLAYER_REF && code == crate::actor_values::HEALTH && amount < 0.0 {
+            match self.immortal_mode() {
+                2 => return,
+                1 => {
+                    let now = fa::actor_value(self, actor, code).unwrap_or(0.0);
+                    amount = amount.max(-(now - 1.0).max(0.0));
+                }
+                _ => {}
+            }
+        }
         if code == crate::actor_values::HEALTH && amount < 0.0 {
             // Health damage can kill (a burn, a poison; hit-effects.md §4).
             self.effect_health_damage(actor, -amount, caster);

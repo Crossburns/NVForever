@@ -3833,6 +3833,7 @@ impl<'a> Game<'a> {
     pub fn open_menu(&mut self, code: u16) {
         if self.menu != Some(code) {
             self.menu = Some(code);
+            self.hud_cursor_menu_opened();
             self.emit(EventKind::MenuOpened { menu: code });
             self.jip_menu_event("menuopen", code);
         }
@@ -4566,6 +4567,10 @@ impl<'a> Game<'a> {
     /// there, so this does not. `None`: the activation was refused.
     pub fn default_activation_by_hand(&mut self, target: FormId) -> Result<Option<HandActivation>, String> {
         let player = FormId::PLAYER_REF;
+        // A form type or reference scripts closed to the player (`crate::nvse_jip9`).
+        if self.player_interaction_disabled(target) {
+            return Ok(None);
+        }
         if !self.activation_begins(player, target) {
             return Ok(None);
         }
