@@ -384,10 +384,22 @@ fn read_pictures(data: &GameData, images: &mut Assets<Image>) -> Result<Pictures
     Ok(Pictures { cells: compose(&alpha, &color, side), side: (side / ATLAS_SIDE) as u32, images: HashMap::default(), flare })
 }
 
+/// Whether the player wears power armour on the upper body.
+fn wears_power_armor(world: &fnv_sim::World) -> bool {
+    use fnv_sim::forms::ItemKind;
+    world.equipment(fnv_sim::FormId::PLAYER_REF).unwrap_or_default().into_iter().filter_map(|i| world.forms.item(i)).any(|it| it.kind == ItemKind::Armor && it.power_armor && it.slots.is_some_and(|s| s & fnv_game::detection::UPPER_BODY != 0))
+}
+
 /// The splats hits on the player add (`HitFeedback::player_hurt`).
-fn take_hurts(mut splatter: ResMut<ScreenSplatter>, feedback: Option<ResMut<crate::combat::HitFeedback>>, sim: Option<Res<SimState>>) {
+fn take_hurts(mut splatter: ResMut<ScreenSplatter>, feedback: Option<ResMut<crate::combat::HitFeedback>>, sim: Option<Res<SimState>>, tweaks: Option<Res<crate::tweaks::TweakSettings>>) {
     let Some(mut feedback) = feedback else { return };
     if feedback.player_hurt.is_empty() {
+        return;
+    }
+    // The player's tweak: no blood on the screen while the player wears power armour on
+    // the body [design: docs/design/tweaks.md].
+    if tweaks.is_some_and(|t| t.power_armor_no_screen_blood) && sim.as_deref().is_some_and(|s| wears_power_armor(&s.world)) {
+        feedback.player_hurt.clear();
         return;
     }
     let sp = &mut *splatter;

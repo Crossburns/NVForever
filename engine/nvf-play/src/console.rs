@@ -988,7 +988,11 @@ fn click(
     panel: Query<&PointerState, With<ConsoleRoot>>,
     free_cam: Res<crate::free_cam::FreeCam>,
     (mut wheel, mut wheel_px): (MessageReader<MouseWheel>, Local<f32>),
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
+    // The player's tweak: a click never picks the player [design: docs/design/tweaks.md].
+    let skip_player = tweaks.is_some_and(|t| t.console_skips_player);
+    let pickable = move |id: u32| !(skip_player && id == FormId::PLAYER_REF.0);
     // Read every frame so a turn made while the console is shut does not count later.
     let mut steps = 0i32;
     for w in wheel.read() {
@@ -1063,7 +1067,7 @@ fn click(
             (form_id, h.distance)
         })
         .collect();
-    let hit = hits.first().map(|&(form_id, distance)| RayHit { form_id, distance });
+    let hit = hits.iter().find(|(f, _)| f.is_none_or(pickable)).map(|&(form_id, distance)| RayHit { form_id, distance });
     let bounds: Vec<(u32, f32)> = visuals
         .iter()
         .filter(|(_, _, _, v)| v.get())
@@ -1073,7 +1077,7 @@ fn click(
             Some((r.0, pick::ray_box(o, d, &t, ce, he)?))
         })
         .collect();
-    match pick::choose(hit, bounds.iter().copied(), CLICK_REACH, |_| true) {
+    match pick::choose(hit, bounds.iter().copied(), CLICK_REACH, pickable) {
         // Clicking the selected reference again unselects it.
         Some(p) if c.selected == Some(p.form_id) => {
             info!("console: unselected {}", FormId(p.form_id));

@@ -281,11 +281,18 @@ fn aim(
     let hit_last = latest.or_else(|| hit_ago.iter().min_by(|a, b| a.1.total_cmp(b.1)).map(|(id, _)| *id));
     let eye = player.eye();
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
+    let hide_cloaked = tweaks.as_ref().is_some_and(|t| t.no_red_crosshair_on_cloaked);
     let (found, foe, anatomy) = with_world(rt, &mut sim, |rt| {
         let foe = aimed.is_some_and(|a| {
             let (r, g) = (FormId(a), &mut rt.game);
             let fighting = g.awareness.get(r).and_then(|x| x.combat_target()).is_some_and(|(t, _)| t == FormId::PLAYER_REF);
-            !g.is_dead(r) && (fighting || g.would_attack(r, FormId::PLAYER_REF))
+            // The player's tweak: an unseen (Invisibility, Chameleon) foe does not give
+            // itself away [design: docs/design/tweaks.md].
+            let cloaked = hide_cloaked && {
+                let av = |g: &mut fnv_game::Game, v: u16| fnv_game::functions::actor_value_capped(g, r, v);
+                av(g, fnv_game::detection::INVISIBILITY) >= 1.0 || av(g, fnv_game::detection::CHAMELEON) >= 1.0
+            };
+            !cloaked && !g.is_dead(r) && (fighting || g.would_attack(r, FormId::PLAYER_REF))
         });
         // In order ([`candidates`]).
         let away = |at: Option<[f32; 3]>| at.map_or(f32::INFINITY, |p| ((p[0] - eye[0]).powi(2) + (p[1] - eye[1]).powi(2) + (p[2] - eye[2]).powi(2)).sqrt());

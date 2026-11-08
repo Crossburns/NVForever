@@ -568,10 +568,14 @@ pub fn init_settings(mut commands: Commands, sim: Res<SimState>) {
 /// The controls that are bound but not built yet.
 const NOT_BUILT: [Control; 0] = [];
 
+/// The real clock and the tweaks, for the holster hold (`crate::tweaks`).
+type HoldClock<'w> = (Option<Res<'w, Time<Real>>>, Option<Res<'w, crate::tweaks::TweakSettings>>);
+
 /// Toggles, holds, the third-person zoom; see the module notes.
 pub fn read_controls(
     input: ControlInput,
     time: Res<Time>,
+    (real, tweaks): HoldClock,
     scroll: Res<AccumulatedMouseScroll>,
     state: Res<State<PlayState>>,
     mut control: ResMut<PlayerControl>,
@@ -606,7 +610,11 @@ pub fn read_controls(
         }
     }
     if let Some(t) = c.ready_held.as_mut() {
-        *t += time.delta_secs();
+        // The player's tweak times the hold on the real clock, not the slowed one [design: docs/design/tweaks.md].
+        *t += match real.as_ref().filter(|_| tweaks.as_ref().is_some_and(|t| t.holster_real_time)) {
+            Some(r) => r.delta_secs(),
+            None => time.delta_secs(),
+        };
         if *t >= HOLSTER_HOLD {
             c.weapon_out = false;
             c.ready_held = None;

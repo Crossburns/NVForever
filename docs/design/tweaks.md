@@ -97,6 +97,16 @@ option.
 | Map Remembers Its Place | `bMapRemembersPosition` | `pipboy::data::opened` |
 | Faster Hacking Exit | `bFasterHackingTransition` | `terminal::timers`: 0.5 s instead of 2 s |
 
+## Fourth batch (2026-11-08)
+
+| Row | INI key | Where |
+|---|---|---|
+| Console Clicks Skip the Player | `bNonSelectablePlayerInConsole` | `console::click` |
+| Holster in Real Time | `bPipboyLightAndHolsteringIgnoreTimescale` | `control::read_controls` (the light already counts real time) |
+| No Screen Blood in Power Armor | `bPowerArmorPreventsScreenBlood` | `screen_splatter::take_hurts` |
+| Invisible Foes Stay Hidden | `bHideRedCrosshairOnDistantInvisibleTargets` | `hud_target::aim` (Invisibility or Chameleon ≥ 1) |
+| Quiet Landings in God Mode | `bGodmodePreventsLegCrippleSound` | `falls::hurt` |
+
 Menu tweaks that code holding the game reads (the Pip-Boy's item info, crafting, the
 level-up menu, the terminal's timers) are kept in `fnv_game::tweaks` too, so no system
 needs another parameter; the catalogue's notes say where NVForever already does what a
@@ -113,8 +123,8 @@ game's Data folder, read-only).
 <!-- generated: the table below lists every tweak of AllTweaks.json (v9.87) by its INI key -->
 | Status | Count |
 |---|---|
-| done | 53 |
-| to do | 550 |
+| done | 67 |
+| to do | 536 |
 | unsure, skipped | 17 |
 | n/a | 15 |
 | skipped: fix | 10 |
@@ -129,7 +139,7 @@ game's Data folder, read-only).
 | `bNoDialogueZoom` | done |  |  | already a row: Gameplay tab, dialogue-zoom |
 | `bPowerArmorNeedsNoTraining` | done |  |  | Power Armor Without Training |
 | `bReduceXP` | done |  | 2 | Experience Earned (slider, x0 to x2) |
-| `bHiddenFragsFix` | to do | yes |  |  |
+| `bHiddenFragsFix` | to do | yes |  | NPCs' own unplayable explosives are hidden from the pickpocket list |
 | `bMoreFrequentNPCLightUpdates` | unsure, skipped | yes | 1 | NVForever lights actors its own way; unclear what to change |
 | `bActorsStickToSlopes` | to do |  | 2 |  |
 | `bAdjustableScopeZoom` | to do |  | 14 |  |
@@ -327,6 +337,7 @@ game's Data folder, read-only).
 |---|---|---|---|---|
 | `bBetterAutoWalk` | done | yes | 1 | already so: strafing does not end auto-walk |
 | `bConsoleHistoryNoStoreDuplicates` | done | yes |  | already so: the console keeps no repeated line |
+| `bCrouchWhileEquippingWeapons` | done | yes |  | already so: crouching is never refused while (un)equipping |
 | `bDecreasedDialogueClickDelay` | done | yes |  | already so: topics can be chosen at once |
 | `bDelayPostCombatLevelUp` | done | yes |  | already so: the level-up menu waits for combat to end (after_combat) |
 | `bDelayPostCombatReputationPopup` | done | yes |  | already so: the reputation box waits for combat to end |
@@ -334,10 +345,15 @@ game's Data folder, read-only).
 | `bFasterEnterLockpickMenu` | done | yes |  | already so: the lockpick menu opens at once |
 | `bFasterHackingTransition` | done | yes |  | Faster Hacking Exit (0.5 s instead of 2 s) |
 | `bFasterSaveMenuClose` | done | yes |  | already so: saving leaves the pause menu open, no wait |
+| `bGodmodePreventsLegCrippleSound` | done | yes |  | Quiet Landings in God Mode (NVForever's pain sound on a fall is the hard-landing sound) |
 | `bHideCrosshairInKillcams` | done | yes |  | already so: no crosshair in a kill camera |
 | `bHideHealthbarInKillcams` | done | yes |  | already so: the HUD is hidden in a kill camera |
 | `bLeftAndRightCancelEachOther` | done | yes |  | already so: left and right held together cancel |
+| `bLessRestrictiveVATSMenu` | done | yes |  | already so: VATS mode has no zoom phase to wait for |
+| `bNonSelectablePlayerInConsole` | done | yes |  | Console Clicks Skip the Player |
 | `bNoSkillMessageIfIncreaseIsZero` | done | yes |  | No Message for Spent Books (the two-decimal option is moot: book points are whole) |
+| `bPipboyLightAndHolsteringIgnoreTimescale` | done | yes |  | Holster in Real Time (the Pip-Boy light already counts real time) |
+| `bQueueWeaponHolsteringWhileAnimsPlay` | done | yes |  | already so: a holster is never dropped (it waits for a draw, else starts at once) |
 | `bScaleMusicVolumeDuringDialogue` | done | yes | 1 | Music While Talking (slider) |
 | `bScaleRadioSongVolumeDuringDialogue` | done | yes | 1 | Radio While Talking (slider) |
 | `bSkipIntroVideo` | done | yes |  | already so: the intro plays only after New Game and any key skips it |
@@ -349,21 +365,15 @@ game's Data folder, read-only).
 | `bNoReputationMessages` | done |  | 5 | Quiet Reputation (box and sound together; per-kind options not built) |
 | `bRandomizeKillcamMode` | done |  |  | n/a: NVForever has one kill camera kind |
 | `bRemoveChemWarnOffIMOD` | done |  |  | No Chem Wore-Off Effect |
-| `bBetterPickupPrompt` | to do | yes |  |  |
-| `bCrouchWhileEquippingWeapons` | to do | yes |  |  |
-| `bDoubleTapReloadToChangeAmmoType` | to do | yes | 2 |  |
+| `bBetterPickupPrompt` | to do | yes |  | the prompt shows one unit; needs the stack count and the encumbrance |
+| `bDoubleTapReloadToChangeAmmoType` | to do | yes | 2 | the owner moved Lower Weapon off a double tap because it held reloads back; ask first |
 | `bFasterControllerPOVRotate` | to do | yes |  |  |
-| `bGodmodePreventsLegCrippleSound` | to do | yes |  |  |
-| `bLessRestrictiveVATSMenu` | to do | yes |  |  |
-| `bNonSelectablePlayerInConsole` | to do | yes |  |  |
-| `bPipboyLightAndHolsteringIgnoreTimescale` | to do | yes |  |  |
-| `bQueueWeaponHolsteringWhileAnimsPlay` | to do | yes |  |  |
 | `bReloadingWithNoAmmoSwapsAmmoTypes` | to do | yes |  | combat::fire is at the system parameter limit |
 | `bRestore2Hotkey` | unsure, skipped | yes | 2 | needs the plugin's own menu XML |
-| `bSelectUnavailableRadios` | to do | yes |  |  |
-| `bShiftIgnoresFriendlyVATS` | to do | yes | 1 |  |
-| `bShiftScreenshotHidesMenus` | to do | yes |  |  |
-| `bSkipDeathcamHotkey` | to do | yes | 2 |  |
+| `bSelectUnavailableRadios` | to do | yes |  | the Pip-Boy lists only stations in range |
+| `bShiftIgnoresFriendlyVATS` | to do | yes | 1 | friendlies are targetable; a Shift filter belongs in vats_mode::barred |
+| `bShiftScreenshotHidesMenus` | to do | yes |  | the capture is asynchronous; MenusHidden must be held a frame or two |
+| `bSkipDeathcamHotkey` | to do | yes | 2 | the death camera (nvforever death_cam) has no end but a load yet |
 | `bActivatingDoesntStandUp` | to do |  |  |  |
 | `bAddItemUsesItemIcon` | unsure, skipped |  |  | needs an icon replacer |
 | `bAddNightVisionToggle` | to do |  | 4 |  |
@@ -441,6 +451,8 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
+| `bAddRGBSliders` | done | yes | 1 | already a row: Interface tab, hud-red / hud-green / hud-blue |
+| `bHideRedCrosshairOnDistantInvisibleTargets` | done | yes |  | Invisible Foes Stay Hidden (at any distance) |
 | `bNoKarmaMessages` | done |  | 7 | Quiet Karma (messages and sounds together; no thresholds yet) |
 | `bNoLocationPopup` | done |  |  | No Location Banner |
 | `bNoQuestFailedPopup` | done |  | 1 | No Quest Failed Banner |
@@ -448,11 +460,9 @@ game's Data folder, read-only).
 | `bNoXPMessages` | done |  | 7 | Quiet Experience (all sources at once; LEVEL UP still shows) |
 | `bRemoveQuestObjectiveAddedText` | done |  | 1 | No Objective List |
 | `bRemoveSneakLabel` | done |  |  | No Sneak Label (native and tile HUD) |
-| `bAddRGBSliders` | to do | yes | 1 |  |
 | `bDescriptiveMarkerAddedMessage` | to do | yes |  | NVForever shows no marker-added popup |
 | `bEnemyHealthbarShowBuffedHP` | to do | yes |  | max_health leaves out temporary modifiers; choose how bars share them |
 | `bHideGrenadeIndicatorForNoDamageExplosions` | to do | yes |  |  |
-| `bHideRedCrosshairOnDistantInvisibleTargets` | to do | yes |  |  |
 | `bMorePreciseRadMeter` | to do | yes | 1 | unclear whether the HUD gain or the Pip-Boy total is meant |
 | `bArmorConditionLabel` | to do |  | 9 |  |
 | `bColoredHUDBars` | to do |  | 2 |  |
@@ -514,6 +524,9 @@ game's Data folder, read-only).
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
 | `bCapitalizeRecipeCategories` | done | yes |  | Recipe Categories in Capitals |
+| `bClickingShowsTerminalText` | done | yes |  | already so: terminal text is shown whole at once |
+| `bConsoleNumpadSupport` | done | yes |  | already so: numpad digits type into the console (with Num Lock) |
+| `bImprovedRaceMenu` | done | yes | 3 | already so: the creator camera pans and zooms close |
 | `bInstantContinueButton` | done | yes |  | already so: Continue loads at once |
 | `bMapRemembersPosition` | done | yes | 1 | Map Remembers Its Place (in the session; the save-persistent option not built) |
 | `bNumberedComputerHotkeys` | done | yes | 1 | Number Keys on Terminals (1-9, 0 the tenth; the number prefix option not built) |
@@ -525,26 +538,23 @@ game's Data folder, read-only).
 | `bDisableLoadingScreenTips` | done |  |  | No Loading Tips |
 | `bNoExitConfirm` | done |  |  | already so: the main menu's Quit asks nothing |
 | `bSavingDoesntClosePauseMenu` | done |  |  | already so: saving leaves the pause menu open |
-| `bBarterShowCapsChange` | to do | yes | 1 |  |
+| `bBarterShowCapsChange` | to do | yes | 1 | half_figure has no settings to read; pass the tweak in |
 | `bChallengeMenuIcons` | unsure, skipped | yes |  | needs another mod (challenge icons) |
-| `bClickingShowsTerminalText` | to do | yes |  |  |
-| `bColorRecentlyAddedMapMarkers` | to do | yes |  |  |
-| `bConsoleNumpadSupport` | to do | yes |  |  |
-| `bDisplayItemEffectTotals` | to do | yes |  |  |
+| `bColorRecentlyAddedMapMarkers` | to do | yes |  | needs a per-session found set (newly_found is drained by the compass) |
+| `bDisplayItemEffectTotals` | to do | yes |  | aid_preview returns totals only; the per-second part is lost |
 | `bHideCursorInDialog` | to do | yes | 1 | the pointer logic (player::grab_cursor) is shared with every menu |
-| `bImprovedRaceMenu` | to do | yes | 3 |  |
-| `bLevelUpScrollWheelSupport` | to do | yes |  |  |
-| `bLivingAnatomyShowDR` | to do | yes | 1 |  |
-| `bMainMenuContinueIcon` | to do | yes |  |  |
-| `bPlaceMarkersAtLocations` | to do | yes | 1 |  |
+| `bLevelUpScrollWheelSupport` | to do | yes |  | the wheel scrolls the rows; needs the hovered row to take it |
+| `bLivingAnatomyShowDR` | to do | yes | 1 | Living Anatomy shows HP and DT; DR not yet |
+| `bMainMenuContinueIcon` | to do | yes |  | thumbnails are on the load page only |
+| `bPlaceMarkersAtLocations` | to do | yes | 1 | placing a marker on the map is not built |
 | `bRecurringChallengeIndicator` | to do | yes | 1 | challenges::Row has no recurring flag yet |
-| `bRememberPipboyScrollPositions` | to do | yes |  |  |
+| `bRememberPipboyScrollPositions` | to do | yes |  | the inventory is a new MenuModel on each opening |
 | `bRemoveDownloadsButton` | n/a | yes |  | NVForever has no Downloads button |
 | `bSaveCharacterSelector` | unsure, skipped | yes | 1 | needs the plugin's own menu XML |
-| `bSeparateHorizontalSensitivity` | to do | yes |  |  |
-| `bShowWeaponPoisonEffects` | to do | yes |  |  |
-| `bSortEquipableAmmo` | to do | yes |  |  |
-| `bSynchronizeContainerCategories` | to do | yes | 1 |  |
+| `bSeparateHorizontalSensitivity` | to do | yes |  | one mouse sensitivity; mouse_look is at 15 parameters |
+| `bShowWeaponPoisonEffects` | to do | yes |  | NVForever has no weapon poison yet |
+| `bSortEquipableAmmo` | to do | yes |  | rows sort by name (menu/model.rs sort_rows) |
+| `bSynchronizeContainerCategories` | to do | yes | 1 | each side keeps its own category |
 | `b12HourPipboyClock` | to do |  |  |  |
 | `b24HourSleepWaitClock` | to do |  |  |  |
 | `bAddInventoryDropItemHotkey` | to do |  |  |  |
@@ -700,32 +710,32 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
-| `bAllowKeyboardAndMouseWithControllerConnected` | to do | yes |  |  |
-| `bArmorPreventsBloodDecals` | to do | yes |  |  |
-| `bArmorSoundsPlayIn3D` | to do | yes |  |  |
-| `bBetterFlycam` | to do | yes | 5 |  |
-| `bCompressDuplicateConsoleMessages` | to do | yes |  |  |
+| `bMeleeImpactEffectsFollowTarget` | done | yes |  | already so: decals on actors hang from a bone |
+| `bPowerArmorPreventsScreenBlood` | done | yes |  | No Screen Blood in Power Armor (any hit while power armor is worn on the body; hits are not told apart by body part here) |
+| `bRadioStaticDecreasesSongVolume` | done | yes |  | already so: the song fades as the static rises |
+| `bAllowKeyboardAndMouseWithControllerConnected` | to do | yes |  | the Input Device setting picks one device; needs both at once |
+| `bArmorPreventsBloodDecals` | to do | yes |  | the impact is sent before DT is worked out |
+| `bArmorSoundsPlayIn3D` | to do | yes |  | the player's foley plays at the listener (anim_sounds player_keys) |
+| `bBetterFlycam` | to do | yes | 5 | up/down and wheel speed are already there; auto-move is not |
+| `bCompressDuplicateConsoleMessages` | to do | yes |  | console print pushes every line |
 | `bConsoleBackground` | unsure, skipped | yes |  | needs the plugin's own menu XML |
 | `bConsolePrintsIncludeTimestamp` | to do | yes | 1 | the console print path also writes the scof file |
-| `bConsoleTextShadow` | to do | yes |  |  |
+| `bConsoleTextShadow` | to do | yes |  | the console draws green text on a dark panel, no shadow |
 | `bCustomScreenshotFormat` | n/a | yes | 1 | NVForever writes its own screenshots |
 | `bDontAllowConsoleTillLoadingIsDone` | n/a | yes |  | the original's start-up order |
-| `bHeatbeatSoundsFade` | to do | yes | 2 |  |
+| `bHeatbeatSoundsFade` | to do | yes | 2 | NVForever plays no heartbeat yet |
 | `bImprovedWeather` | to do | yes | 1 |  |
-| `bMeleeImpactEffectsFollowTarget` | to do | yes |  |  |
-| `bModConsolePrintsIncludeName` | to do | yes | 1 |  |
-| `bMoreResponsiveControllerAiming` | to do | yes |  |  |
+| `bModConsolePrintsIncludeName` | to do | yes | 1 | console print does not know which plugin printed |
+| `bMoreResponsiveControllerAiming` | to do | yes |  | the stick curve is x times |x| (player.rs); choose the new curve |
 | `bMultithreadedHackingMenu` | n/a | yes |  | performance work on the original |
-| `bNoDespawnVisibleStuckProjectiles` | to do | yes |  |  |
-| `bNoInteriorBlackLoadingScreen` | to do | yes | 1 |  |
+| `bNoDespawnVisibleStuckProjectiles` | to do | yes |  | projectiles do not stick in NVForever yet |
+| `bNoInteriorBlackLoadingScreen` | to do | yes | 1 | unsure what to leave out: NVForever shows the picture, not black |
 | `bNoPlayerNameLimit` | to do | yes |  | the name box is laid out for 24 characters; check its drawing first |
 | `bPartialReloads` | unsure, skipped | yes |  | depends on animation file naming conventions not yet checked |
-| `bPowerArmorPreventsScreenBlood` | to do | yes |  |  |
-| `bRadioStaticDecreasesSongVolume` | to do | yes |  |  |
 | `bRememberConsoleHistory` | to do | yes | 1 | needs a file in the NVForever home |
 | `bUseAnimVariants` | unsure, skipped | yes | 3 | depends on animation file naming conventions not yet checked |
 | `bVATSStopFollowingDeadTargets` | to do | yes |  | needs the kill camera shot's start frame kept |
-| `bWeaponImpactEffects` | to do | yes |  |  |
+| `bWeaponImpactEffects` | to do | yes |  | hits on the hand weapon use the flesh impact; holstered weapons have no hit part |
 | `bAllowDuplicateControlBinds` | to do |  |  |  |
 | `bAlternateLevelupSounds` | to do |  | 4 |  |
 | `bAnimDebugging` | n/a |  |  | a mod-author debug print |

@@ -68,6 +68,18 @@ pub struct TweakSettings {
     pub dialogue_music_volume: f32,
     /// `bScaleRadioSongVolumeDuringDialogue`/`fDialogueSongVolumeMult`: the radio's.
     pub dialogue_radio_volume: f32,
+    /// `bNonSelectablePlayerInConsole`: a console click never picks the player.
+    pub console_skips_player: bool,
+    /// `bPipboyLightAndHolsteringIgnoreTimescale`: holding Ready Item to holster counts
+    /// real time (the Pip-Boy light already does).
+    pub holster_real_time: bool,
+    /// `bPowerArmorPreventsScreenBlood`: no blood on the screen in power armour.
+    pub power_armor_no_screen_blood: bool,
+    /// `bHideRedCrosshairOnDistantInvisibleTargets`: an invisible foe does not turn the
+    /// crosshair red.
+    pub no_red_crosshair_on_cloaked: bool,
+    /// `bGodmodePreventsLegCrippleSound`: no hard-landing sound for the player in god mode.
+    pub god_mode_quiet_landing: bool,
 }
 
 impl Default for TweakSettings {
@@ -95,6 +107,11 @@ impl Default for TweakSettings {
             deselect_hotkeys: false,
             dialogue_music_volume: 1.0,
             dialogue_radio_volume: 1.0,
+            console_skips_player: false,
+            holster_real_time: false,
+            power_armor_no_screen_blood: false,
+            no_red_crosshair_on_cloaked: false,
+            god_mode_quiet_landing: false,
         }
     }
 }
@@ -229,6 +246,12 @@ impl Plugin for TweaksPlugin {
         // ---- conversations ----
         part!(app, "dialogue-music", "Music While Talking", "The music's volume in a conversation, as a part of its own; 100% changes nothing. (Stewie's Tweaks bScaleMusicVolumeDuringDialogue)", dialogue_music_volume);
         part!(app, "dialogue-radio", "Radio While Talking", "The radio's volume in a conversation, as a part of its own; 100% changes nothing. (Stewie's Tweaks bScaleRadioSongVolumeDuringDialogue)", dialogue_radio_volume);
+        // ---- batch 4 ----
+        switch!(app, "console-skips-player", "Console Clicks Skip the Player", "Clicking in the console never selects the player. (Stewie's Tweaks bNonSelectablePlayerInConsole)", console_skips_player);
+        switch!(app, "holster-real-time", "Holster in Real Time", "Holding Ready Item to holster counts real time, so slowed time does not lengthen it. (Stewie's Tweaks bPipboyLightAndHolsteringIgnoreTimescale)", holster_real_time);
+        switch!(app, "power-armor-no-screen-blood", "No Screen Blood in Power Armor", "Hits put no blood on the screen while power armor is worn. (Stewie's Tweaks bPowerArmorPreventsScreenBlood)", power_armor_no_screen_blood);
+        switch!(app, "no-red-crosshair-cloaked", "Invisible Foes Stay Hidden", "An invisible foe does not turn the crosshair red. (Stewie's Tweaks bHideRedCrosshairOnDistantInvisibleTargets)", no_red_crosshair_on_cloaked);
+        switch!(app, "god-mode-quiet-landing", "Quiet Landings in God Mode", "In god mode the player's hard landings make no pain sound. (Stewie's Tweaks bGodmodePreventsLegCrippleSound)", god_mode_quiet_landing);
         // ---- rest ----
         switch!(app, "sleep-in-owned-beds", "Sleep in Owned Beds", "A bed that belongs to someone else can be slept in. (Stewie's Tweaks bSleepInOwnedBeds)", game.sleep_in_owned_beds);
         // ---- items ----

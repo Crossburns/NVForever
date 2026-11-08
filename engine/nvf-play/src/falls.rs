@@ -197,7 +197,10 @@ fn hurt(
     mut messages: MessageWriter<ActorHit>,
     play: Option<Res<crate::PlayWorld>>,
     (sfx, mut sounds): (Option<Res<Sfx>>, MessageWriter<PlaySound>),
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
+    // The player's tweak: no hard-landing sound for the player in god mode [design: docs/design/tweaks.md].
+    let quiet_god = tweaks.is_some_and(|t| t.god_mode_quiet_landing) && crate::combat::god_mode();
     for f in fell.read() {
         let rules = *falls.rules.get_or_insert_with(|| FallRules::from_world(&sim.world));
         // ITR's SetFallDamageMult: the actor's multiplier, else the global one
@@ -218,7 +221,7 @@ fn hurt(
             }
         }
         // The hard landing's sound.
-        if let Some(sfx) = sfx.as_deref() {
+        if let Some(sfx) = sfx.as_deref().filter(|_| !(quiet_god && f.actor == FormId::PLAYER_REF)) {
             let found = *falls.sounds.get_or_insert_with(|| [HARD_LANDING_HEAVY, HARD_LANDING_LIGHT].map(|e| sfx.forms.sounds.iter().find(|(_, s)| s.edid.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(e))).map(|(f, _)| *f)));
             let heavy = fnv_game::combat::worn_armor_class(&sim.world, f.actor) == fnv_sim::forms::ArmorClass::Heavy;
             let (edid, sound) = if heavy { (HARD_LANDING_HEAVY, found[0]) } else { (HARD_LANDING_LIGHT, found[1]) };
