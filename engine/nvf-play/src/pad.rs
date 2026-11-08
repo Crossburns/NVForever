@@ -283,42 +283,48 @@ impl Glyph {
         }
     }
 
-    /// How far the point `p` (the picture's middle at 0, its half side 1) lies from the
-    /// shape's outline, in the same units.
+    /// The signed distance from the point `p` (the picture's middle at 0, its half side 1)
+    /// to the glyph's ink: negative inside the drawn shape, positive outside. The four
+    /// shapes are NVForever's own PlayStation glyphs — a solid cross and three bold ring
+    /// outlines — tuned to read as one family at the size they are drawn [design].
     fn distance(self, p: Vec2) -> f32 {
-        fn segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
-            let ab = b - a;
-            let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
-            (p - (a + ab * t)).length()
-        }
         match self {
             Glyph::Cross => {
-                let r = 0.62;
-                segment(p, Vec2::new(-r, -r), Vec2::new(r, r)).min(segment(p, Vec2::new(-r, r), Vec2::new(r, -r)))
+                // A solid X: two flat-ended arms crossing the middle, each a box of
+                // half length `l` along its diagonal and half width `t` [design].
+                let (l, t) = (0.90, 0.14);
+                let s = std::f32::consts::FRAC_1_SQRT_2; // cos and sin of 45 degrees.
+                let arm1 = box_distance(Vec2::new(p.x * s + p.y * s, -p.x * s + p.y * s), l, t);
+                let arm2 = box_distance(Vec2::new(p.x * s - p.y * s, p.x * s + p.y * s), l, t);
+                arm1.min(arm2)
             }
-            Glyph::Circle => (p.length() - 0.66).abs(),
+            Glyph::Circle => {
+                // A ring: outer radius `outer`, the band `thickness` wide.
+                let (outer, thickness) = (0.68, 0.26);
+                (p.length() - outer).max(outer - thickness - p.length())
+            }
             Glyph::Square => {
-                let h = 0.6;
-                let q = p.abs() - Vec2::splat(h);
-                let outside = q.max(Vec2::ZERO).length();
-                let inside = q.x.max(q.y).min(0.0);
-                (outside + inside).abs()
+                // A ring: outer half side `outer`, `thickness` wide, corners eased a touch.
+                let (outer, thickness, radius) = (0.66, 0.26, 0.04);
+                let inner = outer - thickness;
+                rounded_box_distance(p, outer, radius).max(-rounded_box_distance(p, inner, (radius - thickness).max(0.0)))
             }
             Glyph::Triangle => {
-                // Point up (y down in the picture): the apex at the top.
-                let (a, b, c) = (Vec2::new(0.0, -0.68), Vec2::new(0.74, 0.58), Vec2::new(-0.74, 0.58));
-                segment(p, a, b).min(segment(p, b, c)).min(segment(p, c, a))
+                // A ring of three edges `t` thick; the apex points up (y down in the
+                // picture, so the apex's y is negative).
+                let t = 0.13;
+                let (a, b, c) = (Vec2::new(0.0, -0.5625), Vec2::new(0.625, 0.5625), Vec2::new(-0.625, 0.5625));
+                segment(p, a, b).min(segment(p, b, c)).min(segment(p, c, a)) - t
             }
         }
     }
 
     /// The glyph's coverage (0 to 1) of the pixel at `x`, `y` of a `size` square picture:
-    /// an outline [`GLYPH_STROKE`] of the half side thick, its edge eased over a pixel.
+    /// the ink of [`distance`], its edge eased over a pixel.
     pub fn coverage(self, x: u32, y: u32, size: u32) -> f32 {
         let half = size as f32 / 2.0;
         let p = (Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - Vec2::splat(half)) / half;
-        let d = self.distance(p) * half;
-        (GLYPH_STROKE * half / 2.0 - d + 0.5).clamp(0.0, 1.0)
+        (0.5 - self.distance(p) * half).clamp(0.0, 1.0)
     }
 
     /// The glyph as a white picture, its outline in the alpha (tinted by the node's colour).
@@ -336,8 +342,26 @@ impl Glyph {
     }
 }
 
-/// A glyph's outline width, as a share of the picture's half side [design].
-pub const GLYPH_STROKE: f32 = 0.16;
+/// The distance from `p` to the line segment `a`..`b`.
+fn segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+    (p - (a + ab * t)).length()
+}
+
+/// The signed distance to a sharp axis-aligned box of half extents `(hx, hy)`, negative
+/// inside.
+fn box_distance(p: Vec2, hx: f32, hy: f32) -> f32 {
+    let q = p.abs() - Vec2::new(hx, hy);
+    q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0)
+}
+
+/// The signed distance to a rounded square of half side `h` and corner radius `r`,
+/// negative inside.
+fn rounded_box_distance(p: Vec2, h: f32, r: f32) -> f32 {
+    let q = p.abs() - Vec2::splat(h - r);
+    q.max(Vec2::ZERO).length() - r + q.x.max(q.y).min(0.0)
+}
 
 
 /// The input of a name (without case); `None` for none or an unknown name.
@@ -964,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn the_glyphs_are_outlines() {
+    fn the_glyphs_draw_solid_and_ring_shapes() {
         let n = 64;
         for g in Glyph::ALL {
             let img = g.image(n);
@@ -974,8 +998,10 @@ mod tests {
             assert_eq!(g.coverage(0, 0, n), 0.0, "{g:?}");
             assert_eq!(Glyph::named(g.name()), Some(g));
         }
-        // The cross is drawn through the middle, the circle and the square are hollow.
+        // The cross is solid through its middle, not a thin outline; the circle, square
+        // and triangle are rings: ink at their band, clear at the middle.
         assert!(Glyph::Cross.coverage(n / 2, n / 2, n) > 0.9);
+        assert!(Glyph::Cross.coverage(n / 2 + 4, n / 2, n) > 0.5, "the cross is solid, not an outline");
         assert_eq!(Glyph::Circle.coverage(n / 2, n / 2, n), 0.0);
         assert_eq!(Glyph::Square.coverage(n / 2, n / 2, n), 0.0);
         assert_eq!(Glyph::Triangle.coverage(n / 2, n / 2, n), 0.0);
