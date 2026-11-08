@@ -159,12 +159,12 @@ menu words `delete`, `depth`, `front`, `iso`, `reload`, `stack`,
 `use`, `usz`, `visible` [hypothesis for each: from its catalogue summary; revisit one
 when a player or a capture campaign asks for it].
 
-**The other 95** are script functions no master calls, many listed by the wiki as
+**The other 96** are script functions no master calls, many listed by the wiki as
 unused in New Vegas (`ModPCSkill`, `GetFactionReaction`, …) or as conditions with an opcode
 (`GetGold`, `SameFaction`, `IsSnowing`, …). Thirteen that Fallout 3's scripts call came
 off the list on 2026-11-03 (`functions::fo3`, Tale of Two Wastelands), and fourteen more
 the same day (MatchFaceGeometry, Wait, StopWaiting, IsWaiting and the rest of the TTW
-audit's §1); Lutana batch 2 runs SetShowQuestItems by name. They matter for mods: a mod that calls one
+audit's §1). They matter for mods: a mod that calls one
 brings it into the stub audit's count, which then has to handle or stub it. The full
 list is what the test prints (`cargo test -p fnv-game --lib registered_names --
 --nocapture`).

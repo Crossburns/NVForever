@@ -169,7 +169,7 @@ lab `L5.ext.lu2`) is written, not run. Tests: `crates/fnv-game/tests/lutana2.rs`
 | SetINISection `section map [file]`, RemoveINIKey `Section:Key [file]`, RemoveINISection `section [file]` | under `Data\Config` in NVForever's layer (`mod_files.rs`), the calling mod's file by default, numbers as LU writes them; a missing key or section writes nothing [documented; hypothesis for the last] |
 | IsSkillMagazine `ingestible` | an effect with a condition HasPerk Retention or Comprehension, the perks found by Editor ID [documented] |
 | SetIngestibleFlag `ingestible flag value` | 2 Food, 4 Medicine on ENIT for the session; GetIngestibleFlag and the Medicine and Survival boosts read it (`Game::ingest_on`) [documented]; the vendors' categories read the record [not built] |
-| GetShowQuestItems | SetShowQuestItems' switch, on by default [documented]; SetShowQuestItems is built too (opcode 0x114E [observed: command_opcodes.json]); the engine's inventory lists quest items either way [not built] |
+| GetShowQuestItems | SetShowQuestItems' switch, on by default [documented]; SetShowQuestItems runs by name in `nvse_lu2` (scripts compiled from text); it is not registered by opcode, as functions.json has none for it (only command_opcodes.json records 0x114E [observed], and the catalogue takes opcodes only from the masters' bytecode or xEdit); the engine's inventory lists quest items either way [not built] |
 | GetFormCountType `array type` | the forms of the array of that GetType code [documented] |
 | GetFormMods `form` | the plugins defining or overriding it, in load order [documented: the example] |
 

@@ -455,7 +455,6 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x1172, "IsTalkingActivatorActor", Impl(crate::talking_activators::is_talking_activator_actor)),
             // Inventories (items.rs).
             (0x1249, "RemoveAllTypedItems", Impl(items::remove_all_typed_items)),
-            (0x114E, "SetShowQuestItems", Impl(items::set_show_quest_items)),
             (0x11BC, "AddItemHealthPercent", Impl(items::add_item_health_percent)),
             (0x11F6, "ModWeaponHealthPerc", Impl(items::mod_weapon_health_perc)),
             (0x11F5, "SetWeaponHealthPerc", Impl(items::set_weapon_health_perc)),
