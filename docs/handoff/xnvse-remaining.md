@@ -153,6 +153,17 @@ temporary ingestible effects, available perks, hotkey slots, the owner's trespas
 visited and expired cells, lighting template cells, the moon phase, radios, talking
 activator actors, prompt overrides, primitives, effect shaders, armed mines, CallPerRef and
 CallPerMobileObject; probe set jg6 written, not run yet). JohnnyGuitar 184 → 147.
+ShowOff batch 5: the last 37 (#1010, ext-showoff.md §8: the level-up and pause menus on request, live
+explosions, the shot switches, fast travel, detection and combat counts, VATS and item values, the
+player's small states; from the pages, not probed). Census after it, beside batch 4: 565 (ShowOff 71 → 34;
+0 with batch 4).
+SUP batch 6: 22 (#1008, ext-sup6.md: the mouse, the cursor's traits, debug texts, the screen,
+fonts and plugin header texts, the HUD flags as JohnnyGuitar's override, the lockpick menu and
+the throw held, the engine's side in nvf_play::sup_screen and cursor.rs; GetPCTrait 0 by
+decision; not probed yet, set sup6). Census after it: 580 (SUP 93 → 71).
+Lutana batch 2: 29 (#1009, ext-lutana.md §9: map markers and radio data decoded on placed references,
+hotkey units, the INI writers, skill magazines, ingestible flags, the quest items switch, form counts and
+form plugins; from the pages and the records, not probed). Census after it: 573 (LU 53 → 24).
 ShowOff batch 4: 34 (#1010, ext-showoff.md §7: matrices and quaternions, SayTo topics, the INI cache,
 JSON files and folders through NVForever's layer, the pickpocket, quest-message and ammo-regen
 switches, the corner-message handler, ResetInteriorAlt, SetOwnershipTemp, the enable-parent

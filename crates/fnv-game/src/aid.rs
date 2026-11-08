@@ -356,7 +356,11 @@ impl Game<'_> {
     pub fn ingest_on(&mut self, actor: FormId, item: FormId, limb: Option<u16>) -> Ingested {
         // [documented: SetOnUseAidItemEventHandler] this = the actor, the item.
         self.jip_event("useaiditem", Some(actor), vec![fnv_script::vm::XVal::Ref(item.0)]);
-        let def = self.data.ingestibles.get(&item).cloned().unwrap_or_default();
+        let mut def = self.data.ingestibles.get(&item).cloned().unwrap_or_default();
+        // LU's SetIngestibleFlag (`nvse_lu2`).
+        if let Some(f) = crate::nvse::record_value(self, item, "ENIT", "flags").and_then(|v| v.num().ok()) {
+            def.flags = f as u8;
+        }
         let medicine = fa::actor_value_capped(self, actor, 37);
         let survival = fa::actor_value_capped(self, actor, 44);
         let potency = potency(def.flags, medicine, survival, |n| self.aid_setting(n));

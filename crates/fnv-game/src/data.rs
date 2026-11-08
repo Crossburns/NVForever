@@ -871,8 +871,14 @@ pub struct GameData {
     pub table: FunctionTable,
     pub param_types: ParamTypes,
     pub load_order: Vec<String>,
+    /// The plugins (load-order indices) that hold each form more than one plugin
+    /// defines or overrides, in load order (LU's GetFormMods, [`GameData::form_plugins`]).
+    pub form_overrides: HashMap<FormId, Vec<u8>>,
     /// Each plugin's TES4 HEDR version, in load order (GetPluginHeaderVersion).
     pub plugin_versions: Vec<f32>,
+    /// Each plugin's author and description, TES4 CNAM and SNAM, `None` where the header
+    /// has none (SUP's GetModTraitSTR).
+    pub plugin_texts: Vec<(Option<String>, Option<String>)>,
     pub units: Vec<Compiled>,
     /// [`Compiled::key`] → unit (the first unit with that key), for finding a saved
     /// lambda's unit on load.
@@ -1834,7 +1840,9 @@ impl GameData {
             table,
             param_types: param_types.clone(),
             load_order: lo.plugins.iter().map(|p| p.name.clone()).collect(),
+            form_overrides: lo.index.iter().filter(|(_, d)| d.len() > 1).map(|(&id, d)| (FormId(id), d.iter().map(|x| x.plugin).collect())).collect(),
             plugin_versions: lo.plugins.iter().map(|p| p.header.version).collect(),
+            plugin_texts: lo.plugins.iter().map(|p| (p.header.author.clone(), p.header.description.clone())).collect(),
             units: Vec::new(),
             unit_by_key: HashMap::new(),
             scripts: HashMap::new(),
@@ -2313,6 +2321,17 @@ impl GameData {
 
     pub fn script(&self, script: FormId) -> Option<&Compiled> {
         self.scripts.get(&script).map(|&u| &self.units[u])
+    }
+
+    /// The file names of the plugins that hold `form`, defining it or overriding it, in
+    /// load order; none for a form of no plugin (made in play).
+    pub fn form_plugins(&self, form: FormId) -> Vec<String> {
+        let idx: Vec<u8> = match self.form_overrides.get(&form) {
+            Some(v) => v.clone(),
+            None if self.sig(form).is_some() => vec![(form.0 >> 24) as u8],
+            None => Vec::new(),
+        };
+        idx.into_iter().filter_map(|i| self.load_order.get(usize::from(i)).cloned()).collect()
     }
 
     pub fn by_edid(&self, edid: &str) -> Option<FormId> {

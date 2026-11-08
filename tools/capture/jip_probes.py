@@ -6265,6 +6265,152 @@ SUP3_PROBES = (
 )
 
 
+# lu2 (writes, session only, each change put back; #1009): Lutana batch 2
+# (docs/spec-notes/ext-lutana.md §9) through JIP LN: radio data of the pages' own
+# references (RNVTARef; AlienRadioBeaconREF is FO3's and not in FalloutNV.esm, so the
+# radius rows read Camp Guardian's NVCGRadioREF 13D7A2 instead [observed: fnvtool esm
+# decode, XRDO radius 5000, Radius, static 50, position reference 14ADB9]), skill
+# magazines, the quest items switch, form counts by type, the plugins of Scotch, and
+# SetIngestibleFlag on the page's Jalapeno, put back.
+_LU2_HEAD = "ref rP\nref rObj\nref rOther\narray_var aR\nfloat fRes\nfloat fA\nBegin Function { }\n"
+
+
+def _lu2(pid, body, text=False):
+    return (f"lu2.{pid}", _LU2_HEAD + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _lu2v(pid, expr, text=False):
+    return _lu2(pid, f"SetFunctionValue ({expr})", text)
+
+
+LU2_PROBES = (
+    [_lu2v("radio.rnv.is", "RNVTARef.IsRadioRef"),
+     _lu2v("radio.rnv.type", "RNVTARef.GetRadioBroadcastType"),
+     # The AlienRadioBeaconREF rows (the pages' FO3 example) did not compile in the original
+     # nor here: no such editor ID in the load order [observed 2026-11-08].
+     _lu2("radio.cg.radius", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioRadius)"),
+     _lu2("radio.cg.static", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioStatic)"),
+     _lu2("radio.cg.type", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioBroadcastType)"),
+     # GetRadioPosRef is registered with no return type (nvse.log), so `set` takes it first
+     _lu2("radio.cg.posref", _form("rObj", "13D7A2") + "set rOther to rObj.GetRadioPosRef\nSetFunctionValue (GetFormIDString rOther)", True),
+     _lu2v("radio.player.is", "rP.IsRadioRef"),
+     _lu2("radio.cg.set", _form("rObj", "13D7A2") + "rObj.SetRadioRadius 2000\nlet fRes := rObj.GetRadioRadius\nrObj.SetRadioRadius 5000\nSetFunctionValue fRes"),
+     _lu2v("marker.player", "rP.IsMapMarker"),
+     _lu2v("magazine.explosives", "IsSkillMagazine MagazineNVExplosives"),
+     _lu2("magazine.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (IsSkillMagazine rObj)"),
+     _lu2v("questitems", "GetShowQuestItems"),
+     # GetFormCountType takes the array's ID (an integer since JIP v40, the page): an array
+     # variable as the page's example; `(ar_List …)` in its place did not compile [observed 2026-11-08]
+     _lu2("formcount.alch", _form("rObj", NF["stimpak"]) + "let aR := ar_List rObj, rObj, rP\nlet fRes := GetFormCountType aR, 47\nSetFunctionValue fRes"),
+     _lu2("formmods.scotch", "let aR := GetFormMods Scotch\nSetFunctionValue (sv_Construct \"%g %z\" (ar_Size aR) (aR[0]))", True),
+     _lu2("ingestible.food", "let fRes := GetIngestibleFlag JalapenoPepper 2\nSetIngestibleFlag JalapenoPepper 2 0\nlet fA := GetIngestibleFlag JalapenoPepper 2\n"
+          "SetIngestibleFlag JalapenoPepper 2 1\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes fA (GetIngestibleFlag JalapenoPepper 2))", True)]
+)
+
+# sup6 (writes, session only; #1008): SUP batch 6 (docs/spec-notes/ext-sup6.md): the
+# mouse, the cursor's traits, the debug texts, the screen, fonts and plugin headers, the
+# HUD's visibility flags, the lockpick menu and the throw held, all with no menu open
+# and nobody at the controls. Writes restored: the cursor's alpha set back to what it
+# read, the debug text destroyed, the HUD flags written back. One step per frame.
+def _sup6(pid, body, text=True):
+    return (f"sup6.{pid}", "float fA\nfloat fB\nfloat fX\nfloat fY\nstring_var sText\nBegin Function { }\n" + body, text, None, "")
+
+
+SUP6_PROBES = (
+    # The cursor at rest (hypothesis: 255, the arrow's size, 255 255 255).
+    [_sup6("cursor.rest", "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" (GetCursorTrait 0) (GetCursorTrait 1) (GetCursorTrait 2) "
+           "(GetCursorTrait 3) (GetCursorTrait 4) (GetCursorTrait 5))"),
+     _sup6("cursor.set", "let fA := GetCursorTrait 0\nSetCursorTrait 0 100\nlet fB := GetCursorTrait 0\nSetCursorTrait 0 fA\n"
+           "SetFunctionValue (sv_Construct \"%g %g %g\" fA fB (GetCursorTrait 0))"),
+     # Gradual: 200 to 50 over 2 seconds, read at once and a frame on (between the two
+     # ends), then stopped and set back.
+     _sup6("cursor.gradual", "SetCursorTraitGradual 0 200 50 2\nSetFunctionValue (GetCursorTrait 0)", False),
+     _sup6("cursor.gradual.next", "let fA := GetCursorTrait 0\nSetCursorTraitGradual 0\nlet fB := GetCursorTrait 0\nSetCursorTrait 0 255\n"
+           "SetFunctionValue (sv_Construct \"%g %g\" ((fA > 50) && (fA <= 200)) (fA == fB))"),
+     # Debug texts (hypothesis: exists 1 after create, 0 after destroy).
+     _sup6("debugtext", "DebugTextCreate \"NVFProbeText\" 100 100 \"probe\"\nlet fA := DebugTextExists \"NVFProbeText\"\n"
+           "DebugTextSetPos \"NVFProbeText\" 200 200\nDebugTextSetString \"NVFProbeText\" \"probe 2\"\nDebugTextSetZoom \"NVFProbeText\" 20\n"
+           "DebugTextDestroy \"NVFProbeText\"\nSetFunctionValue (sv_Construct \"%g %g %g\" fA (DebugTextExists \"NVFProbeText\") (DebugTextExists \"NVFNoSuchText\"))"),
+     # The mouse out of menus (hypothesis: 0 0 and 0).
+     _sup6("mouse.moves", "GetMouseMovement fX fY 0\nlet fA := fX\nlet fB := fY\nGetMouseMovement fX fY 1\n"
+           "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" fA fB fX fY (GetMouseWheelMovement 0) (GetMouseWheelMovement 1))"),
+     _sup6("mouse.pos", "GetMousePosition fX fY\nSetFunctionValue (sv_Construct \"%g\" ((fX >= 0) && (fY >= 0)))"),
+     # The screen [documented: GetScreenTrait 0-4].
+     _sup6("screen", "SetFunctionValue (sv_Construct \"%g %g %g %g %g\" (GetScreenTrait 0) (GetScreenTrait 1) (GetScreenTrait 2) "
+           "(GetScreenTrait 3) (GetScreenTrait 4))"),
+     # The fonts' heights (hypothesis: base = the file's line height, line = the tallest glyph).
+     _sup6("fonts", "let sText := \"\"\nlet fA := 1\nwhile fA <= 9\nlet sText := sText + (sv_Construct \"%g/%g \" (GetFontTrait fA 0) (GetFontTrait fA 1))\n"
+           "let fA += 1\nloop\nSetFunctionValue sText"),
+     # FalloutNV.esm's author and description [documented].
+     _sup6("modtraits", "SetFunctionValue (sv_Construct \"[%z] [%z] [%z]\" (GetModTraitSTR 0 0) (GetModTraitSTR 0 1) (GetModTraitSTR 0 2))"),
+     # The machine (NVForever's decision: 0); recorded only.
+     _sup6("pctraits", "SetFunctionValue (sv_Construct \"%g %g %g\" ((GetPCTrait 0) > 0) ((GetPCTrait 2) > 0) ((GetPCTrait 6) > 0))"),
+     # The HUD flags as JohnnyGuitar's override [documented]: read, set, put back.
+     _sup6("hudflags", "let fA := GetHUDVisibilityFlags\nSetHUDVisibilityFlags 512\nlet fB := GetHUDVisibilityOverride\n"
+           "SetHUDVisibilityFlags fA\nSetFunctionValue (sv_Construct \"%g %g %g\" fA fB (GetHUDVisibilityFlags))"),
+     # The lockpick menu shut [documented: -1]; SetBobbyPinHealth shut (hypothesis: -1).
+     _sup6("lockpick.shut", "SetFunctionValue (sv_Construct \"%g %g %g %g\" (GetLockPickMenuValue 0) (GetLockPickMenuValue 1) "
+           "(GetLockPickMenuValue 2) (SetBobbyPinHealth))"),
+     # The throw held at rest (hypothesis: 0 before any throw).
+     _sup6("grenade", "SetFunctionValue (GetGrenadeTimeHeld)", False)]
+)
+
+
+# showoff5 (writes, session only, each change put back; #1010): ShowOff batch 5
+# (docs/spec-notes/ext-showoff.md §8): the level-up menu opened by ShowSkillMenu and closed
+# again in the same step, the shot switches' reads, fast travel, AP costs, item values,
+# VATS reads and the player's small states, on the player, Doc Mitchell and the 10mm pistol.
+_SO5_HEAD = "ref rP\nref rDoc\nref rObj\nref rInv\nfloat fRes\nfloat fA\nfloat fB\nBegin Function { }\n"
+
+
+def _so5(pid, body, text=False):
+    return (f"showoff5.{pid}", _SO5_HEAD + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+def _so5v(pid, expr, text=False):
+    return _so5(pid, f"SetFunctionValue ({expr})", text)
+
+
+SHOWOFF5_PROBES = (
+    [_so5v("levelup.page.closed", "GetLevelUpMenuCurrentPage"),
+     _so5v("levelup.points.closed", "GetLevelUpMenuPoints"),
+     _so5v("levelup.setpage.closed", "SetLevelUpMenuCurrentPage 1"),
+     # Opened and closed in one step: the page, the points to allot and allotted, the
+     # perks, and what closing returns [hypothesis: the menu reads at once].
+     _so5("levelup.skillmenu", "let fRes := ShowSkillMenu 3\nlet fA := GetLevelUpMenuCurrentPage\nlet fB := GetLevelUpMenuPoints\n"
+          "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" fRes fA fB (GetLevelUpMenuPoints 0 1) (GetLevelUpMenuPoints 1) (SetLevelUpMenuCurrentPage 2))", True),
+     _so5v("levelup.after", "GetLevelUpMenuCurrentPage"),
+     _so5v("hitscan.read", "SetForceDrawHitscanProjectiles"),
+     _so5v("tracer.read", "SetProjectileTracerChanceOverride"),
+     _so5v("travel.override", "GetPCHasScriptedFastTravelOverride"),
+     _so5v("travel.can", "GetPCCanFastTravel"),
+     _so5("ap.pistol", _form("rObj", NF["pistol10"]) + "SetFunctionValue (sv_Construct \"%g %g %g\" (GetCalculatedAPCost 0 rObj) (GetCalculatedAPCost 1 rObj) (GetCalculatedAPCost 2 rObj))", True),
+     # Fists (no weapon override): the unarmed costs, the uppercut and the cross.
+     _so5("ap.fists", _form("rObj", "1F4") + "SetFunctionValue (sv_Construct \"%g %g %g\" (GetCalculatedAPCost 0 rObj) (GetCalculatedAPCost 1 rObj) (GetCalculatedAPCost 2 rObj))", True),
+     _so5v("vats.engage", "GetVATSMaxEngageDistance"),
+     _so5v("vats.target.doc", "rDoc.GetVATSTargetable"),
+     _so5v("vats.target.player", "rP.GetVATSTargetable"),
+     # The keyboard layout: "q" or "Q" [hypothesis: NVForever returns "" without the layout].
+     _so5v("ansi.16", "ToANSIChar 16 1", True),
+     _so5v("ansi.2", "ToANSIChar 2 1", True),
+     _so5v("invisible.doc", "rDoc.IsActorInvisibleToPlayer"),
+     _so5v("combatactors.player", "rP.GetNumCombatActorsFromActor"),
+     # rP.GetHitLocationLingering on the unhurt player crashed the original [observed
+     # 2026-11-08]: left out.
+     _so5v("nightvision", "PlayerHasNightVisionActive"),
+     _so5v("drinking", "PlayerIsDrinkingPlacedWater"),
+     _so5v("prompt", "GetIsActivationPromptShown"),
+     _so5v("looking", "IsPlayerLookingAround"),
+     _so5("usage.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (rP.GetSpellUsageNumEx rObj)"),
+     # A placed 10mm pistol's value at its condition; with the barter flag outside barter.
+     _so5("itemvalue.pistol", _form("rObj", NF["pistol10"]) + "let rInv := rP.PlaceAtMe rObj 1\nlet fA := rInv.GetCalculatedItemValue\nlet fB := rInv.GetCalculatedItemValue 1\nrInv.Disable\nrInv.MarkForDelete\n"
+          "SetFunctionValue (sv_Construct \"%g %g\" fA fB)", True),
+     _so5v("explosion.none", "rP.GetExplosionRefRadius"),
+     _so5v("stuck.none", "rP.GetProjectileRefIsStuck"),
+     _so5("stagger.player", "SetFunctionValue (rP.ForceHitStaggerReaction)"),
+     _so5("recoil.player", "SetFunctionValue (rP.ForceRecoilAnim)")]
+)
+
 # lutana1 (writes, session only, each change put back; #1009, PR #1776): Lutana batch 1
 # (docs/spec-notes/ext-lutana.md, crates/fnv-game/src/nvse_lutana.rs), the 92 functions on
 # main, run through the installed JIP LN. FalloutNV.esm forms [observed: fnvtool esm
@@ -7535,9 +7681,8 @@ SUP5_PROBES = (
            f"SetFunctionValue (sv_Construct \"%g %g [%z] %g [%z] %g\" fA (ExcelReadFloat \"{_SUP5_A}\" 0 0 0) "
            f"(ExcelReadString \"{_SUP5_A}\" 0 1 0) (ExcelReadFloat \"{_SUP5_A}\" 0 2 0) "
            f"(ExcelReadString \"{_SUP5_A}\" 0 3 0) (ExcelGetCellValueType \"{_SUP5_A}\" 0 3 0))"),
-     _sup5("xl.arr.row", "let aIn := ar_Construct \"array\"\nar_Append aIn 7\nar_Append aIn 8\n"
-           f"let fA := ExcelArrayToFile \"{_SUP5_A}\" 1 0 0 aIn 1\n"
-           f"SetFunctionValue (sv_Construct \"%g %g %g\" fA (ExcelReadFloat \"{_SUP5_A}\" 1 0 1) (ExcelGetRowCount \"{_SUP5_A}\" 1))"),
+     # xl.arr.row (ExcelArrayToFile along a row onto sheet 1 of a one-sheet workbook)
+     # crashed the original [observed 2026-11-08]: left out.
      # Back as an array, a gap at rows 4-5 and a form at row 6 (hypothesis: gaps passed over).
      _sup5("xl.arr.from", f"ExcelWriteString \"{_SUP5_A}\" 0 6 0 \"*FalloutNV.esm:000014\"\n"
            f"let aList := ExcelArrayFromFile \"{_SUP5_A}\" 0 0 0\n"
@@ -7935,6 +8080,8 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "rules1": RULES1_PROBES,
         "rules2": RULES2_PROBES,
         "showoff2": SHOWOFF2_PROBES,
+        "lu2": LU2_PROBES,
+        "showoff5": SHOWOFF5_PROBES,
         "showoff4": SHOWOFF4_PROBES,
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
@@ -7952,11 +8099,12 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "itr": ITR_PROBES,
         "sup2": SUP2_PROBES,
         "sup3": SUP3_PROBES,
+        "sup6": SUP6_PROBES,
         "sup5": SUP5_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5", "jip9", "jg6"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5", "jip9", "jg6", "showoff5", "sup6", "lu2"}
 SETS.update({"lutana1": LUTANA1_PROBES})
 WRITING_SETS |= {"lutana1"}
 SETS.update({"jg3": JG3_PROBES, "jg4": JG4_PROBES})

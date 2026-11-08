@@ -772,6 +772,10 @@ pub struct PlayerState {
     /// Miscellaneous statistics by code (ModPCMiscStat).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub misc_stats: BTreeMap<u16, f64>,
+    /// SetShowQuestItems: quest items shown in the player's inventory (`None`: never set,
+    /// shown) [documented: SetShowQuestItems, "Shows (1, default)"].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub show_quest_items: Option<bool>,
     /// Map markers ShowMap made visible.
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub map_markers: BTreeSet<FormId>,
@@ -1237,6 +1241,9 @@ pub struct Game<'a> {
     pub showoff: crate::nvse_showoff::ShowOffState,
     /// Mods' INI and other files (`crate::mod_files`).
     pub mod_files: crate::mod_files::ModFiles,
+    /// SUP batch 6's state: the mouse, the cursor, the debug texts, the lockpick menu …
+    /// (`crate::nvse_sup6`; the engine fills and takes it).
+    pub sup: crate::nvse_sup6::SupState,
     /// Sound, weather and image-space traits scripts changed (`crate::nvse_traits`).
     pub traits: crate::nvse_traits::TraitState,
     /// kNVSE's animation paths and script-played sequences (`crate::nvse_anim`).
@@ -2183,6 +2190,7 @@ impl<'a> Game<'a> {
             hud: Default::default(),
             showoff: Default::default(),
             mod_files: Default::default(),
+            sup: Default::default(),
             traits: Default::default(),
             anim_paths: Default::default(),
             anim_folders: Default::default(),
@@ -4669,6 +4677,10 @@ impl<'a> Game<'a> {
     /// sources"].
     pub fn drink_from(&mut self, actor: FormId, target: FormId) {
         let Some(water) = self.drink_water(target) else { return };
+        // PlayerIsDrinkingPlacedWater (`nvse_showoff5`).
+        if actor == FormId::PLAYER_REF {
+            self.showoff.b5.last_drink = Some(self.time);
+        }
         let (rads, by) = self.entry_point(actor, crate::perks::ADJUST_DRINKING_RADIATION, 1.0);
         if !by.is_empty() {
             let names: Vec<String> = by.iter().map(|a| self.data.name(a.perk)).collect();

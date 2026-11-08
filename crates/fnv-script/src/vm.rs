@@ -3230,6 +3230,9 @@ fn out_params(lname: &str) -> Option<&'static [usize]> {
         // result XYZ are placed into the 3 specified Script Variables"].
         "getposex" => &[0, 1, 2],
         "getnifblocktranslationalt" | "getnifblockrotationalt" => &[1, 2, 3],
+        // [documented: GetMousePosition, GetMouseMovement, "output … to fPosX and fPosY
+        // script variables"].
+        "getmouseposition" | "getmousemovement" => &[0, 1],
         _ => return None,
     })
 }
