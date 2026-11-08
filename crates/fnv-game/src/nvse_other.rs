@@ -76,6 +76,9 @@ pub struct OtherState {
     /// the record's (`nvse_jg4`, read through `nvse_jg4::idle_marker` and
     /// `nvse_jg4::region_weathers`).
     pub idle_markers: HashMap<FormId, crate::package::IdleCollection>,
+    /// SetIdleMarkerTraitNumeric's flags, the whole byte as set (the collection keeps
+    /// only the two bits it plays by; `nvse_jg4`).
+    pub idle_marker_flags: HashMap<FormId, u8>,
     pub region_weathers: HashMap<FormId, crate::data::RegionWeathers>,
     /// ITR NVSE's state (`nvse_itr1`).
     pub itr: crate::nvse_itr1::ItrState,
