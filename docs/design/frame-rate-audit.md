@@ -466,6 +466,22 @@ Measured on the bench machine (i9-14900K), `battle-50`, profile builds; logs pri
   3. Results stay bit-identical (the same steps in the same order); only when they are
      read changes. Worth building only if the ragdolls' share is still large after the
      owner rules on item 51.
+- **Re-shot corpses move for 1 s (2026-11-08)** [observed, battle-50, profile builds,
+  quiet CPU, 2 runs each]. A corpse at rest roused by a hit's shove is held again after
+  1 s instead of 3 s (`MAX_AWAKE_SHOVED`, owner-review item 51). Seconds corpses spent
+  moving: 258 and 360 on main (36 and about 70 re-wakes), 225 and 219 after (46 and 39).
+  `init_and_solve` 4.40 and 6.24 → 3.58 and 3.38 ms a frame; frame mean 30.5 and 30.0 →
+  28.6 and 27.6 ms; slowest frame 115 and 99 → 98 and 94 ms. Fresh corpses still almost
+  all move the full 3 s: 53 of 58 were held still moving in one run, most with a neck or
+  head turning at 0.7–3 rad/s, or calm for under 1.5 s when held.
+- **The stuck actor's retries (#1797) and the hit-volume refresh: left as they are**
+  [observed, the same runs]. One actor was held stuck. Its full retry move ran 10 times
+  in 90 s, at 3–9 ms each. The 6–9 ms ones came after it asked for a new direction (0.3–1.1
+  rad off, 110–464 units/s), so they cannot be skipped without changing where it goes.
+  About one broad-phase refresh a frame is dirtied by hit volumes alone, asked for by a
+  gameplay cast, at about 0.5 ms (`phys::query_refresh` 1.6 ms a frame over 2–3
+  refreshes). Skipping it would leave the broad phase stale for the next detection, the
+  way #1392 changed step results, so it stays.
 
 ### What the submission costs (#1427)
 
