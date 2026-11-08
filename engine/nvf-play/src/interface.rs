@@ -425,6 +425,42 @@ fn texture_read(
     }
 }
 
+/// A font's picture from its `.tex` file, read before the `.dds` (docs/spec-notes/fonts.md
+/// §2.2): a Russian install's fonts describe the letters of their `.tex`, while the `.dds`
+/// beside it is the English one [observed: #1439]; in an English install the two are the
+/// same picture. Only where the `.dds` is there too, so a font with a `.tex` alone (font 9)
+/// still draws nothing, as in the original (§3.1). None, with a warning for a broken file,
+/// when there is none.
+pub fn font_tex(font: &Font, data: &GameData) -> Option<fnv_font::Tex> {
+    if !data.vfs.exists(&font.texture_path()) {
+        return None;
+    }
+    let path = font.tex_path();
+    match fnv_font::Tex::parse(&data.read(&path)?) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            warn!("interface: {path}: {e}; the .dds is drawn instead");
+            None
+        }
+    }
+}
+
+/// A `.tex` picture as an interface image, made as [`font_texture`] makes a `.dds` one.
+fn tex_image(path: &str, tex: fnv_font::Tex, images: &mut Assets<Image>) -> Option<(Handle<Image>, Vec2)> {
+    let format = bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb;
+    match nvf_assets::texture::checked_image(tex.width, tex.height, 1, format, tex.rgba) {
+        Ok(mut image) => {
+            image.sampler = ImageSampler::linear();
+            let size = image.size().as_vec2();
+            Some((images.add(image), size))
+        }
+        Err(e) => {
+            warn!("interface: {path}: {e}");
+            None
+        }
+    }
+}
+
 /// A stand-in font for measuring when the game's cannot be read: every character as wide
 /// as the next.
 pub fn plain_font(size: f32, advance: f32) -> Font {
@@ -480,7 +516,7 @@ pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut As
                 return None;
             }
         };
-        let image = font_texture(&font.texture_path(), d, images, bc)?;
+        let image = font_tex(&font, d).and_then(|t| tex_image(&font.tex_path(), t, images)).or_else(|| font_texture(&font.texture_path(), d, images, bc))?;
         Some(Face { font, image: Some(image) })
     });
     read.unwrap_or_else(|| {
