@@ -156,6 +156,9 @@ pub struct State {
     /// While a planted explosive's kill is judged: those who saw the player while it was
     /// live, witnesses besides those who see the player now (`Game::crime_witnesses`).
     pub blast_witnesses: Vec<FormId>,
+    /// ShowOff's SetPlayerCanPickpocketEquippedItems: the player may take equipped items
+    /// too (none from a child) [documented: Get/SetPlayerCanPickpocketEquippedItems].
+    pub worn_items: bool,
 }
 
 impl Game<'_> {
@@ -203,6 +206,13 @@ impl Game<'_> {
         let rules = self.pickpocket_rules();
         let (thief, target) = self.pickpocket_skills(victim);
         rules.chance(thief, target, value)
+    }
+
+    /// Whether the pickpocket menu lists `victim`'s equipped items: SetPlayerCanPickpocket-
+    /// EquippedItems 1, and the victim is no child ("Child actors still cannot have their
+    /// equipped items stolen" [documented: SetPlayerCanPickpocketEquippedItems]).
+    pub fn pickpocket_worn(&self, victim: FormId) -> bool {
+        self.pickpocket.worn_items && !self.actor_race(victim).is_some_and(|race| self.data.child_races.contains(&race))
     }
 
     /// The rules as read from the load order.

@@ -139,6 +139,11 @@ pub struct ModFiles {
     written: HashMap<String, String>,
     /// ShowOff's cached INI files, by lower-case Data path: key -> value, read once.
     cache: HashMap<String, HashMap<String, String>>,
+    /// ShowOff's cached JSON files (ReadFromJSON, WriteToJSON with useCache), by the
+    /// lower-case path under the game's folder.
+    json: HashMap<String, serde_json::Value>,
+    /// Folders CreateFolder made this session (under the game's folder, lower case).
+    folders: std::collections::HashSet<String>,
 }
 
 /// The folder of NVForever's layer standing for the game's own folder.
@@ -323,6 +328,23 @@ impl ModFiles {
         on_disk(Path::new(""), rel).is_some() && self.write_under(format!("<root>\\{}", norm(rel)), rel, Some(GAME_ROOT), text)
     }
 
+    /// CreateFolder: a folder under the game's folder, made in NVForever's layer (its
+    /// `GameRoot` folder), never the game's; false for a path [`on_disk`] or
+    /// [`may_write`] refuses. Without a write root it is only kept for the session.
+    fn make_folder_root(&mut self, rel: &str) -> bool {
+        if rel.trim().is_empty() || on_disk(Path::new(""), rel).is_none() {
+            return false;
+        }
+        if let Some(w) = roots().write {
+            let Some(p) = on_disk(&w.join(GAME_ROOT), rel) else { return false };
+            if !may_write(&p) || std::fs::create_dir_all(&p).is_err() {
+                return false;
+            }
+        }
+        self.folders.insert(norm(rel));
+        true
+    }
+
     /// Write a Data file into NVForever's layer; false when refused, as `write_root`.
     pub(crate) fn write(&mut self, rel: &str, text: String) -> bool {
         on_disk(Path::new(""), rel).is_some() && self.write_under(norm(rel), rel, None, text)
@@ -476,6 +498,155 @@ fn num(args: &[XVal], k: usize, dflt: f64) -> f64 {
 fn sup_ini(g: &Game, args: &[XVal]) -> Option<String> {
     let t = g.mod_files.read_root(text(args, 0)?.trim())?;
     Some(t.strip_prefix("\u{ef}\u{bb}\u{bf}").map(str::to_string).unwrap_or(t))
+}
+
+/// Read an INI file into ShowOff's cache when it is not there yet (or again, with
+/// `reload`); its cache key.
+fn cache_ini(g: &mut Game, path: &str, reload: bool) -> String {
+    let key = norm(path);
+    if reload || !g.mod_files.cache.contains_key(&key) {
+        let text = g.mod_files.read(path).unwrap_or_default();
+        let mut m = HashMap::new();
+        for sec in ini_sections(&text) {
+            let ls = sec.to_ascii_lowercase();
+            for (kk, vv) in ini_section(&text, &ls) {
+                m.insert(format!("{ls}:{}", kk.to_ascii_lowercase()), vv);
+            }
+        }
+        g.mod_files.cache.insert(key.clone(), m);
+    }
+    key
+}
+
+/// A JSON string standing for a form: `@`, the plugin's file name, `:`, the FormID without
+/// its load-order index in hex, leading zeros optional [documented: ReadFromJSON,
+/// "@FalloutNV.esm:096BCE"]. `None` for any other string; `Some(0)` for a plugin not
+/// loaded [hypothesis: the form is none].
+fn json_form(g: &Game, s: &str) -> Option<u32> {
+    let rest = s.strip_prefix('@')?;
+    let (file, id) = rest.rsplit_once(':')?;
+    let id = u32::from_str_radix(id.trim(), 16).ok()?;
+    let index = g.data.load_order.iter().position(|p| p.eq_ignore_ascii_case(file.trim()));
+    Some(index.map_or(0, |i| ((i as u32) << 24) | (id & 0x00FF_FFFF)))
+}
+
+/// A JSON value as a script value: an object a string map, an array an array, numbers
+/// and booleans numbers, `null` Ar_Null's 0, a form string the form [documented:
+/// ReadFromJSON's examples].
+fn json_to_xval(g: &mut Game, v: &serde_json::Value) -> XVal {
+    use serde_json::Value as J;
+    match v {
+        J::Null => XVal::Num(0.0),
+        J::Bool(b) => XVal::Num(f64::from(u8::from(*b))),
+        J::Number(n) => XVal::Num(n.as_f64().unwrap_or(0.0)),
+        J::String(s) => match json_form(g, s) {
+            Some(r) => XVal::Ref(r),
+            None => XVal::Str(s.clone()),
+        },
+        J::Array(items) => {
+            let entries = items.iter().enumerate().map(|(i, x)| (XKey::Num(i as f64), json_to_xval(g, x))).collect();
+            XVal::Array(g.ext.new_array(ArrayKind::List, entries))
+        }
+        J::Object(m) => {
+            let entries = m.iter().map(|(k, x)| (XKey::Str(k.clone()), json_to_xval(g, x))).collect();
+            XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
+        }
+    }
+}
+
+/// A script value as JSON, the other way round [documented: WriteToJSON, "takes inputs
+/// in the same format as what is outputted by ReadFromJSON"]: a form is `@`, its plugin,
+/// `:` and its FormID in eight hex digits without the index [documented: WriteToJSON's
+/// example, "@LonesomeRoad.esm:00003E43"]; no form, or one of no loaded plugin (made in
+/// play), is `null`; a numeric map an object keyed by its numbers' text [hypothesis].
+fn xval_to_json(g: &Game, v: &XVal, depth: usize) -> serde_json::Value {
+    use serde_json::Value as J;
+    match v {
+        XVal::Num(x) => serde_json::Number::from_f64(*x).map_or(J::Null, J::Number),
+        XVal::Str(s) => J::String(s.clone()),
+        XVal::Ref(0) => J::Null,
+        XVal::Ref(r) => match g.data.load_order.get((r >> 24) as usize) {
+            Some(p) => J::String(format!("@{p}:{:08X}", r & 0x00FF_FFFF)),
+            None => J::Null,
+        },
+        XVal::Array(id) => {
+            let Some(a) = g.ext.array(*id).filter(|_| depth < 64) else { return J::Null };
+            match a.kind {
+                ArrayKind::List => J::Array(a.entries.iter().map(|(_, x)| xval_to_json(g, x, depth + 1)).collect()),
+                _ => J::Object(
+                    a.entries
+                        .iter()
+                        .map(|(k, x)| {
+                            let key = match k {
+                                XKey::Str(s) => s.clone(),
+                                XKey::Num(n) => cell_text(&XVal::Num(*n)),
+                            };
+                            (key, xval_to_json(g, x, depth + 1))
+                        })
+                        .collect(),
+                ),
+            }
+        }
+    }
+}
+
+/// Put `value` at a JSON Pointer (RFC 6901) in `root`, making the objects on the way
+/// that are missing [hypothesis: the page does not say what a pointer into a missing
+/// part does]; an array index at or past the end (or `-`) appends. False when the path
+/// runs through a value that is neither an object nor an array.
+fn json_set(root: &mut serde_json::Value, pointer: &str, value: serde_json::Value) -> bool {
+    use serde_json::Value as J;
+    if pointer.is_empty() {
+        *root = value;
+        return true;
+    }
+    let Some(rest) = pointer.strip_prefix('/') else { return false };
+    let parts: Vec<String> = rest.split('/').map(|p| p.replace("~1", "/").replace("~0", "~")).collect();
+    let mut cur = root;
+    let mut value = Some(value);
+    for (i, part) in parts.iter().enumerate() {
+        let last = i + 1 == parts.len();
+        if cur.is_null() {
+            *cur = J::Object(serde_json::Map::new());
+        }
+        cur = match cur {
+            J::Object(m) => {
+                if last {
+                    m.insert(part.clone(), value.take().unwrap_or(J::Null));
+                    return true;
+                }
+                m.entry(part.clone()).or_insert(J::Null)
+            }
+            J::Array(items) => {
+                let at = match part.parse::<usize>() {
+                    Ok(n) => n.min(items.len()),
+                    Err(_) if part == "-" => items.len(),
+                    Err(_) => return false,
+                };
+                if at == items.len() {
+                    items.push(J::Null);
+                }
+                if last {
+                    items[at] = value.take().unwrap_or(J::Null);
+                    return true;
+                }
+                &mut items[at]
+            }
+            _ => return false,
+        };
+    }
+    false
+}
+
+/// A JSON file under the game's folder: the cache's copy, else the file parsed. Every
+/// parser mode reads standard JSON [hypothesis: JAXN (1) and TaoConfig (2) extend it;
+/// their extensions are not read, so such a file fails to parse].
+fn json_file(g: &Game, path: &str) -> Option<serde_json::Value> {
+    if let Some(v) = g.mod_files.json.get(&norm(path)) {
+        return Some(v.clone());
+    }
+    let text = g.mod_files.read_root(path)?;
+    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
 }
 
 /// The functions of this file; `None` for any other name.
@@ -712,9 +883,126 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
         }
         "clearfilecacheshowoff" => {
             let path = norm(&text(args, 0).unwrap_or_default());
-            let had = g.mod_files.cache.keys().any(|k| k.ends_with(&path) && !path.is_empty());
+            let had = g.mod_files.cache.keys().chain(g.mod_files.json.keys()).any(|k| k.ends_with(&path) && !path.is_empty());
             g.mod_files.cache.retain(|k, _| path.is_empty() || !k.ends_with(&path));
+            g.mod_files.json.retain(|k, _| path.is_empty() || !k.ends_with(&path));
             XVal::Num(f64::from(u8::from(had)))
+        }
+        // `sectionAndKey [iniPath]`: whether the cached file has the key; the file is
+        // cached when it was not [documented: HasINISetting_Cached, alias HasINISettingC].
+        "hasinisetting_cached" | "hasinisettingc" => {
+            let Some((s, k)) = text(args, 0).as_deref().and_then(section_key) else { return Some(Ok(zero)) };
+            let path = ini_path(g, text(args, 1).as_deref());
+            let key = cache_ini(g, &path, false);
+            XVal::Num(f64::from(u8::from(g.mod_files.cache.get(&key).is_some_and(|m| m.contains_key(&format!("{s}:{k}"))))))
+        }
+        // `[iniPath]`: the cache read again from the file, what it held lost; 1 when the
+        // file exists [documented: ReloadIniCache; hypothesis: a missing file fails and
+        // leaves the cache as it was].
+        "reloadinicache" => {
+            let path = ini_path(g, text(args, 0).as_deref());
+            if g.mod_files.read(&path).is_none() {
+                return Some(Ok(zero));
+            }
+            cache_ini(g, &path, true);
+            XVal::Num(1.0)
+        }
+        // `[iniPath]`: the cached keys written to the file, each in place or added to its
+        // section; 1 when written, 0 with no cache of the file [documented:
+        // SaveCachedIniFile, alias SaveCachedIni; hypothesis: the file's comments and
+        // order kept, keys the cache added written in lower case, as the cache keeps them].
+        "savecachedinifile" | "savecachedini" => {
+            let path = ini_path(g, text(args, 0).as_deref());
+            let Some(m) = g.mod_files.cache.get(&norm(&path)) else { return Some(Ok(zero)) };
+            let mut pairs: Vec<(String, String)> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            pairs.sort();
+            let mut t = g.mod_files.read(&path).unwrap_or_default();
+            for (sk, v) in pairs {
+                if let Some((s, k)) = sk.split_once(':') {
+                    if ini_get(&t, s, k).as_deref() != Some(v.as_str()) {
+                        t = ini_set(&t, s, k, &v, s, k);
+                    }
+                }
+            }
+            XVal::Num(f64::from(u8::from(g.mod_files.write(&path, t))))
+        }
+        // ---- ShowOff's JSON files, under the game's folder (`read_root`) ----
+        // `filepath [jsonPointer] [parserMode] [useCache]`: the value at the pointer (the
+        // root for ""), converted (`json_to_xval`); kept in the cache when asked
+        // [documented: ReadFromJSON]. A missing file, a parse error or a pointer to
+        // nothing gives 0 [hypothesis: the page names no failure value].
+        "readfromjson" => {
+            let path = text(args, 0).unwrap_or_default();
+            let pointer = text(args, 1).unwrap_or_default();
+            let Some(root) = json_file(g, &path) else { return Some(Ok(zero)) };
+            if num(args, 3, 0.0) != 0.0 {
+                g.mod_files.json.insert(norm(&path), root.clone());
+            }
+            match root.pointer(&pointer) {
+                Some(v) => {
+                    let v = v.clone();
+                    json_to_xval(g, &v)
+                }
+                None => zero,
+            }
+        }
+        // `toWrite filepath [jsonPointer] [parserMode] [useCache] [saveFile]
+        // [compactFormatting]`: the value converted and put at the pointer of the file's
+        // JSON (a file that is missing or not JSON starts from nothing); cached when
+        // asked, saved unless saveFile is 0, minified or indented [documented:
+        // WriteToJSON]. Saved into NVForever's layer, never the game's folder
+        // (`write_root`). 1 when done [documented: "success"].
+        "writetojson" => {
+            let Some(value) = args.first() else { return Some(Ok(zero)) };
+            let path = text(args, 1).unwrap_or_default();
+            if path.trim().is_empty() {
+                return Some(Ok(zero));
+            }
+            let pointer = text(args, 2).unwrap_or_default();
+            let new = xval_to_json(g, value, 0);
+            let mut root = json_file(g, &path).unwrap_or(serde_json::Value::Null);
+            if !json_set(&mut root, &pointer, new) {
+                return Some(Ok(zero));
+            }
+            if num(args, 4, 0.0) != 0.0 {
+                g.mod_files.json.insert(norm(&path), root.clone());
+            }
+            let mut ok = true;
+            if num(args, 5, 1.0) != 0.0 {
+                let body = if num(args, 6, 0.0) != 0.0 { serde_json::to_string(&root) } else { serde_json::to_string_pretty(&root) }.unwrap_or_default();
+                ok = g.mod_files.write_root(&path, body);
+            }
+            XVal::Num(f64::from(u8::from(ok)))
+        }
+        // `folderPath`: a folder under the game's folder, made in NVForever's layer; 1
+        // when made [documented: CreateFolder, alias CreateDirectory].
+        "createfolder" | "createdirectory" => {
+            let rel = text(args, 0).unwrap_or_default().replace('/', "\\");
+            XVal::Num(f64::from(u8::from(g.mod_files.make_folder_root(&rel))))
+        }
+        // `list [fileName] [bAppend]`: the list's forms, to the console, or to a file under
+        // the game's folder, added after its text unless bAppend is 0 [documented:
+        // DumpFormList, alias FListDump]. The lines are NVForever's own words.
+        "dumpformlist" | "flistdump" => {
+            let l = match args.first() {
+                Some(XVal::Ref(r)) if *r != 0 => fnv_sim::FormId(*r),
+                _ => return Some(Ok(zero)),
+            };
+            let members = crate::functions::list_members(g, l);
+            let mut lines = vec![format!("Form list {} ({:08X}): {} forms", g.data.name(l), l.0, members.len())];
+            lines.extend(members.iter().enumerate().map(|(i, f)| format!("  {i}: {:08X} {}", f.0, g.data.name(*f))));
+            match text(args, 1).filter(|f| !f.trim().is_empty()) {
+                None => g.console_out.extend(lines),
+                Some(file) => {
+                    let body = lines.join("\n");
+                    let t = match g.mod_files.read_root(&file).filter(|_| num(args, 2, 1.0) != 0.0) {
+                        Some(old) if !old.is_empty() => format!("{old}\n{body}"),
+                        _ => body,
+                    };
+                    g.mod_files.write_root(&file, t);
+                }
+            }
+            zero
         }
         // ---- MCM: "File/Section/Key" of Data\Config\File.ini; a number is written with
         // four decimals [observed: "fMcm=5.0000"] ----

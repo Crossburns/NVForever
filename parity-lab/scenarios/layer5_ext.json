@@ -876,6 +876,20 @@
    "tags": ["ext", "showoff", "probes", "showoff2"]
   },
   {
+   "id": "L5.ext.showoff4",
+   "layer": 5,
+   "description": "ShowOff NVSE batch 4 (#1010; docs/spec-notes/ext-showoff.md section 7): the matrix and quaternion functions on the pages' examples, SayTo's topic on Doc Mitchell, the pickpocket, quest-message and frozen-regen switches and what they return, the hotkey icon override, the INI cache and ReadFromJSON on missing files, DisableAlt / EnableAlt; set showoff4 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/showoff4.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/showoff4.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "showoff", "probes", "showoff4"]
+  },
+  {
    "id": "L5.ext.jg1",
    "layer": 5,
    "description": "JohnnyGuitar NVSE batch 1 (#1007; docs/spec-notes/ext-jg1.md): book, faction, creature, race, weapon world model, music type, container sound and lighting template getters and setters; set jg1 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",

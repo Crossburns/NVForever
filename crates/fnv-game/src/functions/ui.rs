@@ -69,6 +69,9 @@ pub struct UiRequests {
     /// KillQuestUpdates calls so far: the HUD drops the quest lines it has not shown yet
     /// on each new count (`nvf_play::quest_messages`).
     pub quest_updates_killed: u64,
+    /// ShowOff's ToggleQuestMessages 0: the HUD shows no quest line (added, completed,
+    /// failed, objectives) until it is turned on again (`nvf_play::script`).
+    pub quest_messages_off: bool,
 }
 
 /// A film a script asked for (`PlayBink`), for the engine's film player

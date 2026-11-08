@@ -6089,6 +6089,81 @@ SUP3_PROBES = (
 )
 
 
+# showoff4 (writes, session only, each change put back; #1010): ShowOff batch 4
+# (docs/spec-notes/ext-showoff.md §7): the matrix and quaternion functions (the
+# quaternion's convention and normalising are hypotheses), SayTo_GetTopic on Doc Mitchell,
+# the switches' defaults and their return values, the INI cache and ReadFromJSON on files
+# that do not exist (nothing is written to a file), DisableAlt / EnableAlt on Doc's
+# reference and the hotkey icon override of the 10mm pistol.
+_SO4_HEAD = ("ref rP\nref rDoc\nref rObj\narray_var aM\narray_var aR\nfloat fRes\nBegin Function { }\n")
+
+
+def _so4(pid, body, text=False):
+    return (f"showoff4.{pid}", _SO4_HEAD + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+def _so4v(pid, expr, text=False):
+    return _so4(pid, f"SetFunctionValue ({expr})", text)
+
+
+def _so4m(pid, make, cells):
+    """A matrix made by `make` (into aR), its cells as text "a b c ..." or its ar_Size."""
+    shown = " ".join("%g" for _ in cells)
+    args = " ".join(f"(aR{c})" for c in cells)
+    return _so4(pid, f"let aR := {make}\nif eval (ar_Size aR) < 1\nSetFunctionValue \"none\"\nreturn\nendif\n"
+                     f"SetFunctionValue (sv_Construct \"{shown}\" {args})", True)
+
+
+_M2 = "(ar_List (ar_List 3, 4) (ar_List 5, 6))"
+SHOWOFF4_PROBES = (
+    [_so4v("ismat.text", 'Matrix_IsMatrix (ar_List "test")'),
+     _so4v("ismat.one", "Matrix_IsMatrix (ar_List (ar_List 1))"),
+     _so4v("ismat.ragged", "Matrix_IsMatrix (ar_List (ar_List 1), (ar_List 2, 3))"),
+     _so4v("ismat.mixed", "Matrix_IsMatrix (ar_List 5, (ar_List 2, 3))"),
+     _so4v("ismat.flat", "Matrix_IsMatrix (ar_List 1, 2, 3)"),
+     _so4v("ismat.empty", "Matrix_IsMatrix (ar_List)"),
+     _so4m("mul.2x2", f'Mat_ApplyOpWithMat {_M2} "*" (ar_List (ar_List 7, 8) (ar_List 9, 10))', ["[0][0]", "[0][1]", "[1][0]", "[1][1]"]),
+     _so4v("mul.undefined.size", 'ar_Size (Mat_ApplyOpWithMat (ar_List 1, 2, 3) "*" (ar_List 1, 2, 3))'),
+     # A 1-D input: the result is 1-D (ar_Size 3) or a list of one row (1) [hypothesis: 1-D].
+     _so4v("schur.flat.size", 'ar_Size (Mat_ApplyOpWithMat (ar_List 1, 2, 3) "%" (ar_List 1, 2, 3))'),
+     _so4m("schur.flat", 'Mat_ApplyOpWithMat (ar_List 1, 2, 3) "%" (ar_List 1, 2, 3)', ["[0]", "[1]", "[2]"]),
+     _so4m("div.2x2", f'Mat_ApplyOpWithMat {_M2} "/" {_M2}', ["[0][0]", "[1][1]"]),
+     _so4m("scal.div", f'Mat_ApplyOpWithScal {_M2} "/" 2', ["[0][0]", "[0][1]", "[1][0]", "[1][1]"]),
+     _so4v("scal.mod.size", f'ar_Size (Mat_ApplyOpWithScal {_M2} "%" 2)'),
+     # Division by zero: inf or something else [hypothesis: the floating-point infinity].
+     _so4m("scal.div0", f'Mat_ApplyOpWithScal {_M2} "/" 0', ["[0][0]"]),
+     _so4m("transpose.2x2", f"Mat_T {_M2}", ["[0][0]", "[0][1]", "[1][0]", "[1][1]"]),
+     # A 1-D row transposed: three rows of one [hypothesis].
+     _so4v("transpose.flat.size", "ar_Size (Mat_T (ar_List 1, 2, 3))"),
+     # The quaternion's convention: 90 degrees about Z gives m[0][1] -1 and m[1][0] 1 in
+     # the usual right-handed form [hypothesis].
+     _so4m("quat.z90", "Quat_GetMat (ar_List 0.70710678, 0, 0, 0.70710678)", ["[0][0]", "[0][1]", "[1][0]", "[2][2]"]),
+     # Not of unit length: normalised first, the identity, or something else [hypothesis].
+     _so4m("quat.unnormal", "Quat_GetMat (ar_List 2, 0, 0, 0)", ["[0][0]", "[1][1]", "[2][2]"]),
+     _so4m("quat.back", "Mat_GetQuat (ar_List (ar_List 0, -1, 0) (ar_List 1, 0, 0) (ar_List 0, 0, 1))", ["[0]", "[1]", "[2]", "[3]"]),
+     # The sign: w kept not negative [hypothesis]; a rotation of 270 degrees about Z.
+     _so4m("quat.back.270", "Mat_GetQuat (ar_List (ar_List 0, 1, 0) (ar_List -1, 0, 0) (ar_List 0, 0, 1))", ["[0]", "[1]", "[2]", "[3]"]),
+     _so4v("sayto.topic.doc", "GetFormIDString (rDoc.SayTo_GetTopic)", True),
+     _so4v("sayto.info.doc", "GetFormIDString (rDoc.SayTo_GetTopicInfo)", True),
+     _so4v("pickpocket.default", "GetPlayerCanPickpocketEquippedItems"),
+     # The read: 1 while quest messages are on [hypothesis].
+     _so4v("questmsgs.read", "ToggleQuestMessages"),
+     _so4("questmsgs.off", "let fRes := ToggleQuestMessages 0\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes (ToggleQuestMessages 0) (ToggleQuestMessages))", True),
+     _so4("questmsgs.restore", "let fRes := ToggleQuestMessages 1\nSetFunctionValue (sv_Construct \"%g %g\" fRes (ToggleQuestMessages))", True),
+     _so4v("freezeammo.read", "FreezeAmmoRegen"),
+     _so4("freezeammo.on", "let fRes := FreezeAmmoRegen 1\nSetFunctionValue (sv_Construct \"%g %g\" fRes (FreezeAmmoRegen))", True),
+     _so4("freezeammo.restore", "let fRes := FreezeAmmoRegen 0\nSetFunctionValue (sv_Construct \"%g %g\" fRes (FreezeAmmoRegen))", True),
+     _so4("hotkeyicon.pistol", _form("rObj", NF["pistol10"]) + "SetFunctionValue (sv_Construct \"[%z] [%z]\" (GetItemHotkeyIconPath rObj 1) (GetItemHotkeyIconPath rObj))", True),
+     _so4("hotkeyicon.set", _form("rObj", NF["pistol10"]) + "SetItemHotkeyIconPath rObj \"interface\\icons\\nvfprobe.dds\"\nSetFunctionValue (GetItemHotkeyIconPath rObj 1)", True),
+     _so4("hotkeyicon.restore", _form("rObj", NF["pistol10"]) + "SetItemHotkeyIconPath rObj \"\"\nSetFunctionValue (sv_Construct \"[%z]\" (GetItemHotkeyIconPath rObj 1))", True),
+     _so4v("hasini.missing", 'HasINISetting_Cached "Main:fNone" "NVFExtProbe\\nvfso4missing"'),
+     _so4v("reloadini.missing", 'ReloadIniCache "NVFExtProbe\\nvfso4missing"'),
+     _so4v("readjson.missing", 'TestExpr (ReadFromJSON "nvfso4missing.json")'),
+     _so4("disablealt.doc", "rDoc.DisableAlt\nlet fRes := rDoc.GetDisabled\nrDoc.EnableAlt 0\nSetFunctionValue (sv_Construct \"%g %g\" fRes (rDoc.GetDisabled))", True),
+     _so4v("patchfreezetime", "PatchFreezeTime"),
+     _so4v("fadestate.doc", "rDoc.GetActorFadeState")]
+)
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -6152,6 +6227,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "rules1": RULES1_PROBES,
         "rules2": RULES2_PROBES,
         "showoff2": SHOWOFF2_PROBES,
+        "showoff4": SHOWOFF4_PROBES,
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
@@ -6169,7 +6245,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "showoff4", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):
