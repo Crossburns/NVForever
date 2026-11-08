@@ -565,6 +565,15 @@ pub(crate) fn position(g: &Game, r: FormId) -> Option<[f32; 3]> {
     g.world.peek(r).map(|s| s.pos).or_else(|| g.world.placed.get(r).map(|p| p.pos))
 }
 
+/// What [`Game::kin`] reads of one actor (kept by `detection::Round::kin`).
+#[derive(Debug, Clone)]
+pub(crate) struct KinFacts {
+    base: Option<FormId>,
+    factions: Vec<FormId>,
+    /// One of its factions names reactions (not only utility factions).
+    fights: bool,
+}
+
 impl Game<'_> {
     fn awareness_timers(&mut self) -> Timers {
         match self.awareness.timers {
@@ -693,7 +702,7 @@ impl Game<'_> {
             if !self.world.is_enabled(other).unwrap_or(false) {
                 return false;
             }
-            if self.kin(actor, other) {
+            if self.kin_kept(actor, other) {
                 return false;
             }
             // "Defensive Combat": "The actor will not attack an NPC or creature, unless he
@@ -704,7 +713,7 @@ impl Game<'_> {
             }
         }
         let relation = faction_relation(self, actor, other);
-        let aggression = actor_value(self, actor, AGGRESSION).unwrap_or(0.0) as i64;
+        let aggression = self.aggression_kept(actor);
         match aggression {
             a if a >= 3 => true,
             2 => relation != 2 && relation != 3,
@@ -928,19 +937,68 @@ impl Game<'_> {
         if a == b || a == FormId::PLAYER_REF || b == FormId::PLAYER_REF {
             return false;
         }
+        self.kin_with(a, b, &self.kin_facts(a), &self.kin_facts(b))
+    }
+
+    /// [`Game::kin`] with each actor's facts kept for the rest of a detection round's
+    /// hostility (`detection::Round::kin`).
+    fn kin_kept(&mut self, a: FormId, b: FormId) -> bool {
+        if a == b || a == FormId::PLAYER_REF || b == FormId::PLAYER_REF {
+            return false;
+        }
+        if self.detection_round.as_ref().is_none_or(|r| r.hostile.is_none()) {
+            return self.kin(a, b);
+        }
+        let facts = |g: &mut Game, r: FormId| {
+            if let Some(f) = g.detection_round.as_ref().and_then(|round| round.kin.get(&r)) {
+                return f.clone();
+            }
+            let f = g.kin_facts(r);
+            if let Some(round) = g.detection_round.as_mut() {
+                round.kin.insert(r, f.clone());
+            }
+            f
+        };
+        let (fa, fb) = (facts(self, a), facts(self, b));
+        self.kin_with(a, b, &fa, &fb)
+    }
+
+    /// What [`Game::kin`] reads of one actor: its base (placed or created at run time,
+    /// PlaceAtMe), its factions, and whether one of them names reactions.
+    fn kin_facts(&self, r: FormId) -> KinFacts {
+        let factions = factions_of(self, r);
+        let fights = factions.iter().any(|f| self.faction_names_reactions(f));
+        KinFacts { base: crate::functions::base_of(self, r), factions, fights }
+    }
+
+    fn faction_names_reactions(&self, f: &FormId) -> bool {
+        self.data.faction_reactions.get(f).is_some_and(|v| !v.is_empty())
+    }
+
+    fn kin_with(&self, a: FormId, b: FormId, fa: &KinFacts, fb: &KinFacts) -> bool {
         if faction_relation(self, a, b) == 1 || faction_relation(self, b, a) == 1 {
             return false;
         }
-        // Placed or created at run time (PlaceAtMe).
-        let base = |r: FormId| crate::functions::base_of(self, r);
-        if base(a).is_some() && base(a) == base(b) {
+        if fa.base.is_some() && fa.base == fb.base {
             return true;
         }
-        let names = |f: &FormId| self.data.faction_reactions.get(f).is_some_and(|v| !v.is_empty());
-        let (mine, theirs) = (factions_of(self, a), factions_of(self, b));
-        let shared: Vec<&FormId> = mine.iter().filter(|f| theirs.contains(f)).collect();
-        let fighting_faction = |fs: &[FormId]| fs.iter().any(names);
-        shared.iter().any(|f| names(f)) || (!shared.is_empty() && (!fighting_faction(&mine) || !fighting_faction(&theirs)))
+        let mut shared = fa.factions.iter().filter(|f| fb.factions.contains(f)).peekable();
+        let any_shared = shared.peek().is_some();
+        shared.any(|f| self.faction_names_reactions(f)) || (any_shared && (!fa.fights || !fb.fights))
+    }
+
+    /// `actor`'s Aggression, kept for the rest of a detection round's hostility
+    /// (`detection::Round::aggression`).
+    fn aggression_kept(&mut self, actor: FormId) -> i64 {
+        let keep = self.detection_round.as_ref().is_some_and(|r| r.hostile.is_some());
+        if let Some(&a) = self.detection_round.as_ref().filter(|_| keep).and_then(|r| r.aggression.get(&actor)) {
+            return a;
+        }
+        let a = actor_value(self, actor, AGGRESSION).unwrap_or(0.0) as i64;
+        if let Some(round) = self.detection_round.as_mut().filter(|_| keep) {
+            round.aggression.insert(actor, a);
+        }
+        a
     }
 }
 
