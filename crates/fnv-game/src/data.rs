@@ -873,6 +873,8 @@ pub struct GameData {
     pub load_order: Vec<String>,
     /// Each plugin's TES4 HEDR version, in load order (GetPluginHeaderVersion).
     pub plugin_versions: Vec<f32>,
+    /// Each plugin's author and description, TES4 CNAM and SNAM (SUP's GetModTraitSTR).
+    pub plugin_texts: Vec<(String, String)>,
     pub units: Vec<Compiled>,
     /// [`Compiled::key`] → unit (the first unit with that key), for finding a saved
     /// lambda's unit on load.
@@ -1823,6 +1825,7 @@ impl GameData {
             param_types: param_types.clone(),
             load_order: lo.plugins.iter().map(|p| p.name.clone()).collect(),
             plugin_versions: lo.plugins.iter().map(|p| p.header.version).collect(),
+            plugin_texts: lo.plugins.iter().map(|p| (p.header.author.clone().unwrap_or_default(), p.header.description.clone().unwrap_or_default())).collect(),
             units: Vec::new(),
             unit_by_key: HashMap::new(),
             scripts: HashMap::new(),

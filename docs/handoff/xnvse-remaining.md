@@ -142,6 +142,10 @@ probed, lab L5.ext.jg5 88 of 88).
 Census after it: 649 (JohnnyGuitar 216 → 184).
 With JIP batch 8 merged: 602 (JIP 201, JohnnyGuitar 184) [observed: the extender_census
 test, 2026-11-08].
+SUP batch 6: 22 (#1008, ext-sup6.md: the mouse, the cursor's traits, debug texts, the screen,
+fonts and plugin header texts, the HUD flags as JohnnyGuitar's override, the lockpick menu and
+the throw held, the engine's side in nvf_play::sup_screen and cursor.rs; GetPCTrait 0 by
+decision; not probed yet, set sup6). Census after it: 580 (SUP 93 → 71).
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,

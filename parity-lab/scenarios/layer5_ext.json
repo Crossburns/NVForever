@@ -1070,6 +1070,20 @@
    },
    "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
    "tags": ["ext", "pp", "probes"]
+  },
+  {
+   "id": "L5.ext.sup6",
+   "layer": 5,
+   "description": "SUP NVSE batch 6 (#1008; docs/spec-notes/ext-sup6.md): the cursor's traits, debug texts, the mouse out of menus, the screen, fonts, plugin header texts, the HUD's visibility flags, the lockpick menu shut and the throw held at rest; set sup6 of tools/capture/jip_probes.py (writes restored), keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/sup6.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/sup6.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "sup", "probes", "sup6"]
   }
  ]
 }

@@ -1386,6 +1386,13 @@ impl Combat {
     /// throw_action`). A round-by-round reload reads 17 while it opens the weapon, 9 for
     /// its rounds and its close [hypothesis: `AnimAction::ReloadOpen`]. A jam reads 13
     /// [hypothesis: the page's catch-all, "every action not included in the ones above"].
+    /// The player's weapon is thrown or laid by hand (SUP's GetGrenadeTimeHeld,
+    /// `crate::sup_screen`): its animation type is one of
+    /// `fnv_sim::forms::THROWN_ANIM_TYPES`.
+    pub fn player_weapon_is_throwable(&self) -> bool {
+        self.weapon.and_then(|w| self.forms.weapons.get(&w)).and_then(|w| w.anim_type.as_deref()).is_some_and(|t| fnv_sim::forms::THROWN_ANIM_TYPES.contains(&t))
+    }
+
     /// The player's weapon is a mine: its WEAP animation type is "Land Mine (1 Hand)" or
     /// "Mine Drop (1 Hand)" (IsPlayerActionActive 4 while one is laid).
     pub fn player_weapon_is_mine(&self) -> bool {

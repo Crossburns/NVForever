@@ -6089,6 +6089,55 @@ SUP3_PROBES = (
 )
 
 
+# sup6 (writes, session only; #1008): SUP batch 6 (docs/spec-notes/ext-sup6.md): the
+# mouse, the cursor's traits, the debug texts, the screen, fonts and plugin headers, the
+# HUD's visibility flags, the lockpick menu and the throw held, all with no menu open
+# and nobody at the controls. Writes restored: the cursor's alpha set back to what it
+# read, the debug text destroyed, the HUD flags written back. One step per frame.
+def _sup6(pid, body, text=True):
+    return (f"sup6.{pid}", "float fA\nfloat fB\nfloat fX\nfloat fY\nstring_var sText\nBegin Function { }\n" + body, text, None, "")
+
+
+SUP6_PROBES = (
+    # The cursor at rest (hypothesis: 255, the arrow's size, 255 255 255).
+    [_sup6("cursor.rest", "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" (GetCursorTrait 0) (GetCursorTrait 1) (GetCursorTrait 2) "
+           "(GetCursorTrait 3) (GetCursorTrait 4) (GetCursorTrait 5))"),
+     _sup6("cursor.set", "let fA := GetCursorTrait 0\nSetCursorTrait 0 100\nlet fB := GetCursorTrait 0\nSetCursorTrait 0 fA\n"
+           "SetFunctionValue (sv_Construct \"%g %g %g\" fA fB (GetCursorTrait 0))"),
+     # Gradual: 200 to 50 over 2 seconds, read at once and a frame on (between the two
+     # ends), then stopped and set back.
+     _sup6("cursor.gradual", "SetCursorTraitGradual 0 200 50 2\nSetFunctionValue (GetCursorTrait 0)", False),
+     _sup6("cursor.gradual.next", "let fA := GetCursorTrait 0\nSetCursorTraitGradual 0\nlet fB := GetCursorTrait 0\nSetCursorTrait 0 255\n"
+           "SetFunctionValue (sv_Construct \"%g %g\" ((fA > 50) && (fA <= 200)) (fA == fB))"),
+     # Debug texts (hypothesis: exists 1 after create, 0 after destroy).
+     _sup6("debugtext", "DebugTextCreate \"NVFProbeText\" 100 100 \"probe\"\nlet fA := DebugTextExists \"NVFProbeText\"\n"
+           "DebugTextSetPos \"NVFProbeText\" 200 200\nDebugTextSetString \"NVFProbeText\" \"probe 2\"\nDebugTextSetZoom \"NVFProbeText\" 20\n"
+           "DebugTextDestroy \"NVFProbeText\"\nSetFunctionValue (sv_Construct \"%g %g %g\" fA (DebugTextExists \"NVFProbeText\") (DebugTextExists \"NVFNoSuchText\"))"),
+     # The mouse out of menus (hypothesis: 0 0 and 0).
+     _sup6("mouse.moves", "GetMouseMovement fX fY 0\nlet fA := fX\nlet fB := fY\nGetMouseMovement fX fY 1\n"
+           "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" fA fB fX fY (GetMouseWheelMovement 0) (GetMouseWheelMovement 1))"),
+     _sup6("mouse.pos", "GetMousePosition fX fY\nSetFunctionValue (sv_Construct \"%g\" ((fX >= 0) && (fY >= 0)))"),
+     # The screen [documented: GetScreenTrait 0-4].
+     _sup6("screen", "SetFunctionValue (sv_Construct \"%g %g %g %g %g\" (GetScreenTrait 0) (GetScreenTrait 1) (GetScreenTrait 2) "
+           "(GetScreenTrait 3) (GetScreenTrait 4))"),
+     # The fonts' heights (hypothesis: base = the file's line height, line = the tallest glyph).
+     _sup6("fonts", "let sText := \"\"\nlet fA := 1\nwhile fA <= 9\nlet sText := sText + (sv_Construct \"%g/%g \" (GetFontTrait fA 0) (GetFontTrait fA 1))\n"
+           "let fA += 1\nloop\nSetFunctionValue sText"),
+     # FalloutNV.esm's author and description [documented].
+     _sup6("modtraits", "SetFunctionValue (sv_Construct \"[%z] [%z] [%z]\" (GetModTraitSTR 0 0) (GetModTraitSTR 0 1) (GetModTraitSTR 0 2))"),
+     # The machine (NVForever's decision: 0); recorded only.
+     _sup6("pctraits", "SetFunctionValue (sv_Construct \"%g %g %g\" ((GetPCTrait 0) > 0) ((GetPCTrait 2) > 0) ((GetPCTrait 6) > 0))"),
+     # The HUD flags as JohnnyGuitar's override [documented]: read, set, put back.
+     _sup6("hudflags", "let fA := GetHUDVisibilityFlags\nSetHUDVisibilityFlags 512\nlet fB := GetHUDVisibilityOverride\n"
+           "SetHUDVisibilityFlags fA\nSetFunctionValue (sv_Construct \"%g %g %g\" fA fB (GetHUDVisibilityFlags))"),
+     # The lockpick menu shut [documented: -1]; SetBobbyPinHealth shut (hypothesis: -1).
+     _sup6("lockpick.shut", "SetFunctionValue (sv_Construct \"%g %g %g %g\" (GetLockPickMenuValue 0) (GetLockPickMenuValue 1) "
+           "(GetLockPickMenuValue 2) (SetBobbyPinHealth))"),
+     # The throw held at rest (hypothesis: 0 before any throw).
+     _sup6("grenade", "SetFunctionValue (GetGrenadeTimeHeld)", False)]
+)
+
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -6165,11 +6214,12 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "tmpl3": TMPL3_PROBES,
         "itr": ITR_PROBES,
         "sup2": SUP2_PROBES,
-        "sup3": SUP3_PROBES}
+        "sup3": SUP3_PROBES,
+        "sup6": SUP6_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "sup6"}
 
 
 def script(body):

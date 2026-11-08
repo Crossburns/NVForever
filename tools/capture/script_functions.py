@@ -242,6 +242,10 @@ def _item_mod_handler(flag):
 # Parameters where a page's argument table is missing or short: what the game took
 # [observed: the probe named] or what the page's own example passes [documented].
 PARAM_FIXES = {
+    # [documented: SetCursorTrait's example "SetCursorTrait 0 255"; the table lists the
+    # trait only].
+    "SetCursorTrait": [{"name": "iTrait", "type": "int", "kind": "int"},
+                       {"name": "fValue", "type": "float", "kind": "float"}],
     # [observed: jip-probes rules1/rules2 (#1021): `let x := ref.SetNthPackage package
     # index` compiled in the game and replaced the package at the index].
     "SetNthPackage": [{"name": "package", "type": "form", "kind": "form"},
