@@ -22276,3 +22276,61 @@ expect = [
 ]
 forbid = ["pipboy: warm-up start", "pipboy: warm-up asked", "pipboy: first raise held", "menu request ignored"]
 manual = "This control must ask new pipelines at the first raise; otherwise the comparison is inconclusive. Compare its first_a through first_d with the warm run for the old screen fault. Pipeline compile durations and the last screen/glare ready lines determine the faulty interval; do not infer an unmeasured duration from the shot schedule. The shader-defs line for the last screen/glare pipeline to become ready identifies the candidate variant in the blue/brown depth fight; confirm against the corresponding shots."
+
+[[scenario]]
+name = "ui-string-dimensions"
+source = "[documented: GetStringUIDimensions] width, height and line-count output variables; [design: ui_more.rs, tiles/draw.rs] owned localized metrics are installed before the authored restart script; wrapping and explicit newlines share the renderer's layout"
+areas = ["ui", "scripts"]
+paths = ["crates/fnv-game/src/ui_more.rs", "crates/fnv-game/tests/ui_more.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/script.rs", "tools/smoke/fixtures/ui-dimensions-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/ui-dimensions-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'script: print "nvf dimensions single [1-9]\d*(?:\.\d+)? [1-9]\d*(?:\.\d+)? 1"', count = 1, label = "startup script replaces all sentinels with positive one-line metrics" },
+  { re = 'script: print "nvf dimensions newline [1-9]\d*(?:\.\d+)? [1-9]\d*(?:\.\d+)? 2"', count = 1 },
+  { text = 'script: print "nvf dimensions newline checks 1 1 1"', count = 1, label = "newline keeps width, increases height, gives two lines" },
+  { re = 'script: print "nvf dimensions wrap [1-9]\d*(?:\.\d+)? [1-9]\d*(?:\.\d+)? 2"', count = 1 },
+  { text = 'script: print "nvf dimensions wrap checks 1 1 1"', count = 1, label = "wrap at one word gives exactly two equal-width lines" },
+  { re = 'script: print "nvf dimensions alternate [1-9]\d*(?:\.\d+)? [1-9]\d*(?:\.\d+)? 1"', count = 1, label = "font 8 measures before any HUD tile requests it" },
+]
+
+[[scenario]]
+name = "ui-cursor-inspection"
+source = "[documented: GetUIElementType, DumpTileInfo] missing and nonexistent paths fall back to the cursor tile; [design: ui_more.rs] an authored frame callback inspects while the existing HUD pointer aid remains active"
+note = "No console is opened. The authored target covers x 120-380, y 300-420 in interface units; the explicit-path image control sits away from the pointer. DumpTileInfo uses toFile=1 so its output is logged directly while the HUD stays active."
+areas = ["ui", "scripts"]
+paths = ["crates/fnv-game/src/ui_more.rs", "crates/fnv-game/tests/ui_more.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/mod.rs", "tools/smoke/fixtures/ui-cursor-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/ui-cursor-home", NVF_PLAY_TEST_TILE_MENUS = "HUDMainMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_POINTER = "6:220:360,12:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+expect = [
+  { text = 'script: print "nvf cursor injected 1"', count = 1 },
+  { re = 'tiles: pointer over HUDMainMenu/NVFCursorProbe \(id 977\)', label = "the aid actually highlights the authored image" },
+  { text = 'script: print "nvf cursor active HUDMainMenu/NVFCursorProbe"', count = 1 },
+  { text = 'script: print "nvf cursor types 2 2 2"', count = 1, label = "explicit image, missing-path probe image, invalid-path probe image" },
+  { text = '[ Tilename ] : Explicit', count = 1, label = "DumpTileInfo retains path argument 1" },
+  { text = '[ Tilename ] : NVFCursorProbe', count = 2, label = "both fallback dumps reach the cursor's tile" },
+]
+
+[[scenario]]
+name = "ui-typewriter-tile-script"
+source = "[documented: SetUITypewriter, SetTileScript, RemoveTileScript] authored XML links _TS0/_TA0 to visible text; [design: nvse_small.rs, tiles/draw.rs] frame callbacks change drawn colour traits, run only on nonzero traits, replace per trait and can be removed"
+note = "The authored controller samples stages on GetSessionTime: mid-fade after 3 s, enable at 3 s, suppress at 4 s, replace at 5 s, remove at 6 s, sample after in-flight work at 7 s, final after 8.5 s. No console opens."
+areas = ["ui", "scripts", "hud"]
+paths = ["crates/fnv-game/src/nvse_small.rs", "crates/fnv-game/tests/small_libs.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/mod.rs", "tools/smoke/fixtures/ui-typewriter-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/ui-typewriter-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "4.5:ui_typewriter_middle.png,12:ui_typewriter_final.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+expect = [
+  { text = 'script: print "nvf type injected 1"', count = 1 },
+  { re = 'script: print "nvf type middle (\d+)"', range = [1, 254], count = 1, label = "an intermediate alpha, neither invisible nor finished" },
+  { text = 'script: print "nvf type zero 0"', count = 1, label = "zero gate suppresses the original callback" },
+  { text = 'script: print "nvf type active 1"', count = 1 },
+  { text = 'script: print "nvf type suppressed 1"', count = 1, label = "returning to zero stops its counter" },
+  { text = 'script: print "nvf type replaced 1 1"', count = 1, label = "old counter stays still while replacement runs" },
+  { text = 'script: print "nvf type removed 1"', count = 1, label = "removed callback stays stopped with gate still nonzero" },
+  { text = 'script: print "nvf type final 255 A"', count = 1 },
+  { re = 'tiles: HUDMainMenu: 1 mod tiles drawn \(3 items\)', label = "the authored rect, bar and linked text enter rendering" },
+]
+order = [["nvf type middle", "nvf type active", "nvf type suppressed", "nvf type replaced", "nvf type removed", "nvf type final"]]
+manual = "ui_typewriter_middle.png: a partially faded letter A in the blue box above the amber bar; ui_typewriter_final.png: the same letter fully visible with the replacement callback's pink colour. Verify the text and alpha links affect the rendered result."
