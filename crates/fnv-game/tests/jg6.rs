@@ -272,6 +272,10 @@ fn radios_prompts_primitives_shaders() {
 fn calls_per_reference() {
     let f = fixture();
     let mut g = game(&f);
+    // A cell that is not loaded gives no calls [observed: jg6 rerun, Doc's house].
+    g.run_source("CallPerRef (begin function {ref r}\nlet TestCount := TestCount + 1\nend) 0 0 0 TestRoom", RunCtx::default()).unwrap();
+    assert_eq!(n(&mut g, "TestCount"), 0.0);
+    g.set_loaded([FormId(ROOM)].into_iter().collect());
     // [documented: CallPerRef: once per reference of the cell; the type filters].
     g.run_source("CallPerRef (begin function {ref r}\nlet TestCount := TestCount + 1\nend) 0 0 0 TestRoom", RunCtx::default()).unwrap();
     assert_eq!(n(&mut g, "TestCount"), 5.0);

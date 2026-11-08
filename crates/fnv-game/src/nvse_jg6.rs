@@ -424,6 +424,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             };
             let (dist, angle) = (num(args, 2, 0.0), num(args, 3, 0.0));
             let cell = form(args, 4);
+            // A cell that is not loaded gives no calls; the calls run before CallPerRef
+            // returns [observed: jg6 rerun, Doc's house (not loaded) 0 calls against
+            // GetRefsInCell 21; the player's cell 0xDEB16, type 0, 13 calls against 14
+            // references, counted in the same script and unchanged a frame later].
+            if cell.is_some_and(|c| !g.loaded_cells.contains(&c)) {
+                return Some(Ok(zero));
+            }
             let me = subject.unwrap_or(FormId::PLAYER_REF);
             let mut refs: Vec<FormId> = Vec::new();
             for t in types {
@@ -439,7 +446,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // `function level [type]`: once per actor of the processing level, 0 the actors
         // of the loaded cells, 3 the others, 1 and 2 none (as GetActorsByProcessingLevel,
         // `nvse_gaps`) [documented: CallPerMobileObject, CallPerMobileObjectEx: an array of
-        // types], without the calling reference and disabled ones.
+        // types], without the calling reference and disabled ones. The original's level 0
+        // also takes some references that are not actors [observed: jg6 rerun, 20 calls =
+        // the 16 of GetActorsByProcessingLevel 0 and 4 other references, not identified];
+        // they are not called here [not built].
         "callpermobileobject" | "callpermobileobjectex" => {
             let Some(func) = args.first().cloned() else { return Some(Ok(zero)) };
             let types: Vec<i64> = match args.get(2) {
