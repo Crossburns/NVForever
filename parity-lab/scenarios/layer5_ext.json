@@ -1030,6 +1030,20 @@
    "tags": ["ext", "jg", "probes", "jg5"]
   },
   {
+   "id": "L5.ext.jg6",
+   "layer": 5,
+   "description": "JohnnyGuitar batch 6 (#1007; docs/spec-notes/ext-jg6.md): actor values by code and UnsetAV/UnforceAV, RewardKarmaAlt, life states, temporary ingestible effects, available perks, effect shaders, armed mines, visited and expired cells, buffered cells, lighting template cells, the moon phase, radios, talking activator actors, prompt overrides, primitives, CallPerRef and CallPerMobileObject; set jg6 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/jg6.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/jg6.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "jg", "probes", "jg6"]
+  },
+  {
    "id": "L5.ext.format1",
    "layer": 5,
    "description": "How sv_Construct writes %g, %G and %e (docs/spec-notes/ext-format.md §2) and two texture sets' flags; set format1 of tools/capture/jip_probes.py, keyed by probe id. Oracle and candidate as L5.ext.jip.getters.",

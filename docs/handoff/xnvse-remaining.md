@@ -148,6 +148,11 @@ the game volumes, SetFontFile, SetSystemColor, the health bar's actor, immortal 
 interaction by type, GetPosEx, the NIF block material values and the Alt translation and
 rotation; engine side in `script_switches.rs` and `nif_mirror.rs`; not probed). Census
 after it: 579 (JIP 201 → 178).
+JohnnyGuitar batch 6: 37 (#1007, ext-jg6.md: actor values by code, UnsetAV, life states,
+temporary ingestible effects, available perks, hotkey slots, the owner's trespass alarm,
+visited and expired cells, lighting template cells, the moon phase, radios, talking
+activator actors, prompt overrides, primitives, effect shaders, armed mines, CallPerRef and
+CallPerMobileObject; probe set jg6 written, not run yet). JohnnyGuitar 184 → 147.
 ShowOff batch 4: 34 (#1010, ext-showoff.md §7: matrices and quaternions, SayTo topics, the INI cache,
 JSON files and folders through NVForever's layer, the pickpocket, quest-message and ammo-regen
 switches, the corner-message handler, ResetInteriorAlt, SetOwnershipTemp, the enable-parent

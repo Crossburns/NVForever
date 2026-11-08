@@ -96,6 +96,8 @@ pub struct OtherState {
     pub jip9: crate::nvse_jip9::Jip9State,
     /// JohnnyGuitar batch 5's record changes (`nvse_jg5`).
     pub jg5: crate::nvse_jg5::Jg5State,
+    /// JohnnyGuitar batch 6's state (`nvse_jg6`).
+    pub jg6: crate::nvse_jg6::Jg6State,
 }
 
 /// The bit of DisablePlayerControlsAltEx's flags for each control group, in the order of
