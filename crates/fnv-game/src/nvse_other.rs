@@ -88,6 +88,9 @@ pub struct OtherState {
     /// JIP batch 8's changes: actor effects, base effects, water effects, excluded combat
     /// actions (`nvse_jip8`).
     pub jip8: crate::nvse_jip8::Jip8State,
+    /// JIP batch 9's switches and what the engine tells: the HUD cursor, volumes, fonts,
+    /// colours, immortal mode, disabled interaction types (`nvse_jip9`).
+    pub jip9: crate::nvse_jip9::Jip9State,
     /// JohnnyGuitar batch 5's record changes (`nvse_jg5`).
     pub jg5: crate::nvse_jg5::Jg5State,
 }

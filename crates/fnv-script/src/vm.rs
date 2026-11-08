@@ -3226,6 +3226,10 @@ fn out_params(lname: &str) -> Option<&'static [usize]> {
         "gettfcposex" => &[0, 1, 2],
         "gettfcangleex" | "gettfcrotex" => &[0, 1],
         "getcalculatedpos" | "getcalculatedposalt" => &[2, 3],
+        // [documented: GetPosEx, GetNifBlockTranslationAlt, GetNifBlockRotationAlt, "the
+        // result XYZ are placed into the 3 specified Script Variables"].
+        "getposex" => &[0, 1, 2],
+        "getnifblocktranslationalt" | "getnifblockrotationalt" => &[1, 2, 3],
         _ => return None,
     })
 }
