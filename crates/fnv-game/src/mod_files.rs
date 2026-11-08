@@ -141,7 +141,7 @@ pub struct ModFiles {
     cache: HashMap<String, HashMap<String, String>>,
     /// ShowOff's cached JSON files (ReadFromJSON, WriteToJSON with useCache), by the
     /// lower-case path under the game's folder.
-    json: HashMap<String, serde_json::Value>,
+    showoff_json: HashMap<String, serde_json::Value>,
     /// Folders CreateFolder made this session (under the game's folder, lower case).
     folders: std::collections::HashSet<String>,
 }
@@ -642,7 +642,7 @@ fn json_set(root: &mut serde_json::Value, pointer: &str, value: serde_json::Valu
 /// parser mode reads standard JSON [hypothesis: JAXN (1) and TaoConfig (2) extend it;
 /// their extensions are not read, so such a file fails to parse].
 fn json_file(g: &Game, path: &str) -> Option<serde_json::Value> {
-    if let Some(v) = g.mod_files.json.get(&norm(path)) {
+    if let Some(v) = g.mod_files.showoff_json.get(&norm(path)) {
         return Some(v.clone());
     }
     let text = g.mod_files.read_root(path)?;
@@ -883,9 +883,9 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
         }
         "clearfilecacheshowoff" => {
             let path = norm(&text(args, 0).unwrap_or_default());
-            let had = g.mod_files.cache.keys().chain(g.mod_files.json.keys()).any(|k| k.ends_with(&path) && !path.is_empty());
+            let had = g.mod_files.cache.keys().chain(g.mod_files.showoff_json.keys()).any(|k| k.ends_with(&path) && !path.is_empty());
             g.mod_files.cache.retain(|k, _| path.is_empty() || !k.ends_with(&path));
-            g.mod_files.json.retain(|k, _| path.is_empty() || !k.ends_with(&path));
+            g.mod_files.showoff_json.retain(|k, _| path.is_empty() || !k.ends_with(&path));
             XVal::Num(f64::from(u8::from(had)))
         }
         // `sectionAndKey [iniPath]`: whether the cached file has the key; the file is
@@ -936,7 +936,7 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
             let pointer = text(args, 1).unwrap_or_default();
             let Some(root) = json_file(g, &path) else { return Some(Ok(zero)) };
             if num(args, 3, 0.0) != 0.0 {
-                g.mod_files.json.insert(norm(&path), root.clone());
+                g.mod_files.showoff_json.insert(norm(&path), root.clone());
             }
             match root.pointer(&pointer) {
                 Some(v) => {
@@ -965,7 +965,7 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
                 return Some(Ok(zero));
             }
             if num(args, 4, 0.0) != 0.0 {
-                g.mod_files.json.insert(norm(&path), root.clone());
+                g.mod_files.showoff_json.insert(norm(&path), root.clone());
             }
             let mut ok = true;
             if num(args, 5, 1.0) != 0.0 {
