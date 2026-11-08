@@ -153,8 +153,11 @@ fn the_cursor_where_the_engine_tells_it() {
     assert_eq!(n(&mut g, "GetCursorPos Y 1"), 480.0);
     // A window twice the interface's height: two pixels a unit.
     g.other.jip9.window = Some((2560.0, 1920.0));
+    assert_eq!(n(&mut g, "GetCursorPos X"), 1280.0, "the centre, with no cursor known");
+    // The engine tells the system cursor: outside the menus that is the pointer
+    // [observed: a jip9 rerun gave 1278.5 / 431.94 where the mouse was].
     g.other.jip9.cursor_px = Some((640.0, 480.0));
-    assert_eq!(n(&mut g, "GetCursorPos X"), 1280.0, "the centre");
+    assert_eq!(n(&mut g, "GetCursorPos X"), 640.0, "the system cursor");
     q(&mut g, "ToggleHUDCursor 1");
     assert_eq!((n(&mut g, "GetCursorPos X"), n(&mut g, "GetCursorPos Y")), (640.0, 480.0));
     // In XML coordinates: the tree's pointer, else the pixels over two.

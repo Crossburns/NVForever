@@ -203,14 +203,16 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // `axis [useXML]`. Screen coordinates are the window's pixels from its top left
         // [documented: "(0, 0) is at the top-left corner"]; XML ones the interface's
         // units, the pointer the tile tree hits with. Outside MenuMode and the HUD cursor
-        // the pointer is the window's centre [observed: jip9 cursor.X0 640, Y0 360,
-        // X1 853.333, Y1 480 on a 1280 by 720 window].
+        // it is the system cursor's position over the window [observed: jip9 reruns gave
+        // 640 / 360 and 1278.5 / 431.94 on a 1280 by 720 window, where the mouse was];
+        // with no cursor known (headless), the window's centre.
         "getcursorpos" => {
             let (Some(a), xml) = (axis(args.first()), num(args, 1).is_some_and(|x| x != 0.0)) else { return Some(Ok(zero)) };
             let per = px_per_unit(g);
             if g.menu.is_none() && !g.other.jip9.hud_cursor {
                 let (w, h) = window(g);
-                let c = if a == 0 { w / 2.0 } else { h / 2.0 };
+                let (x, y) = g.other.jip9.cursor_px.unwrap_or((w / 2.0, h / 2.0));
+                let c = if a == 0 { x } else { y };
                 return Some(Ok(XVal::Num(if xml { c / per } else { c })));
             }
             let at = if xml {
