@@ -597,6 +597,9 @@ pub struct RegionDef {
     pub areas: Vec<Vec<[f32; 2]>>,
     /// The weather block (RDAT type 3, then RDWT), when the region has one.
     pub weathers: Option<RegionWeathers>,
+    /// The map block (RDAT type 4, then RDMP), when the region has one: its name and the
+    /// header's priority (schema `sky.json` REGN RDMP).
+    pub map: Option<(String, u8)>,
 }
 
 /// A region's weather block [documented: xEdit wbRegionDataEntries type 3; schema
@@ -1565,7 +1568,7 @@ const BOUNDS_SIGS: [[u8; 4]; 20] = [
 ];
 
 /// The record types whose fields [`GameData::record_fields`] keeps.
-pub const FIELD_SIGS: [[u8; 4]; 47] = [
+pub const FIELD_SIGS: [[u8; 4]; 49] = [
     *b"PROJ", *b"EXPL", *b"AMMO", *b"WEAP", *b"ARMO", *b"LSCR", *b"NOTE", *b"PERK", *b"MESG", *b"TERM", *b"IMOD", *b"CHAL", *b"BOOK", *b"BPTD", *b"MISC", *b"ALCH", *b"KEYM",
     *b"NPC_", *b"CREA", *b"FACT", *b"RACE", *b"HAIR", *b"EYES", *b"SOUN", *b"WTHR", *b"IMGS", *b"IMAD", *b"AMEF", *b"CLMT", *b"CELL", *b"WRLD", *b"IPDS", *b"IPCT", *b"IDLE", *b"ACTI",
     // JIP batch 4 (`crate::nvse_jip4`).
@@ -1576,6 +1579,8 @@ pub const FIELD_SIGS: [[u8; 4]; 47] = [
     *b"LTEX",
     // JohnnyGuitar batch 3 (`crate::nvse_jg3`).
     *b"EFSH", *b"MSET",
+    // JIP batch 8 (`crate::nvse_jip8`): GetEffectFlag / SetEffectFlag read SPIT and ENIT flags.
+    *b"SPEL", *b"ENCH",
 ];
 
 /// The winning records of the [`FIELD_SIGS`] types, each decoded by
@@ -1617,7 +1622,11 @@ impl RecordFields {
 ///
 /// CSCR (a creature's sounds template) and NIFZ (its model list): JIP batch 6
 /// (`crate::nvse_jip6`). NAM4 (the impact material): JIP batch 7 (`crate::nvse_jip7`).
-const ACTOR_SUBS: [[u8; 4]; 19] = [*b"ACBS", *b"HNAM", *b"LNAM", *b"ENAM", *b"HCLR", *b"NAM6", *b"NAM7", *b"RNAM", *b"PNAM", *b"KFFZ", *b"VTCK", *b"DATA", *b"MODL", *b"TNAM", *b"BNAM", *b"WNAM", *b"CSCR", *b"NIFZ", *b"NAM4"];
+/// INAM (the death item), TPLT (the template), SPLO (the actor effects): JIP batch 8
+/// (`crate::nvse_jip8`).
+const ACTOR_SUBS: [[u8; 4]; 22] = [
+    *b"ACBS", *b"HNAM", *b"LNAM", *b"ENAM", *b"HCLR", *b"NAM6", *b"NAM7", *b"RNAM", *b"PNAM", *b"KFFZ", *b"VTCK", *b"DATA", *b"MODL", *b"TNAM", *b"BNAM", *b"WNAM", *b"CSCR", *b"NIFZ", *b"NAM4", *b"INAM", *b"TPLT", *b"SPLO",
+];
 
 /// A record's subrecords decoded by the schema, with each enum as its number (the
 /// decoder names them) so a script getter can return it.
@@ -3346,6 +3355,11 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
                             })
                             .collect();
                         rg.weathers = Some(RegionWeathers { flags: num(h.and_then(|h| h.get("flags"))) as u8, priority: num(h.and_then(|h| h.get("priority"))) as u8, list });
+                    }
+                    // A map name follows a header of type 4 [observed: VMapGoodspringsRegion].
+                    b"RDMP" if num(header.and_then(|h| h.get("type"))) == 4.0 => {
+                        let name = v.as_ref().and_then(Json::as_str).unwrap_or_default().to_string();
+                        rg.map = Some((name, num(header.and_then(|h| h.get("priority"))) as u8));
                     }
                     b"WNAM" => rg.world = fid(v),
                     b"RPLI" => rg.areas.push(Vec::new()),
