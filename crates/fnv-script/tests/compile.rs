@@ -1177,3 +1177,10 @@ fn a_block_lambda_may_open_with_a_space() {
     let (c, _) = build("begin GameMode\nCallWhen ( begin function {}\nPrintC \"x\"\nend) ({}=> (GetSecondsPassed) != 0) (0b10100)\nend");
     assert!(c.errors().next().is_none(), "{:?}", c.diags);
 }
+
+#[test]
+fn this_is_get_self() {
+    // 0x10CE GetSelf, 0x100E GetAV, #1 Confidence.
+    let l = lets("ref r\nfloat f\nbegin GameMode\nlet r := this\nlet f := this.GetAV Confidence\nend");
+    assert_eq!(l, ["(v1 Set= 10CE())", "(v2 Set= 10CE().100E(#1))"]);
+}

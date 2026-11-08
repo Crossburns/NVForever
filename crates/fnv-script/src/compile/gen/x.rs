@@ -351,6 +351,27 @@ impl Gen<'_> {
                 }
             }
         }
+        // `this`, alone or as the reference of a call (`this.GetAV Confidence`): GetSelf,
+        // when no variable or record has that name [documented: Lambda; observed: High and
+        // Dry plugins' bytes hold a GetSelf call (0x10CE, no parameters) where their source
+        // writes `This`, in object scripts too].
+        let (h0, rest) = match w.split_once('.') {
+            Some((h, r)) => (h, Some(r)),
+            None => (w, None),
+        };
+        if h0.eq_ignore_ascii_case("this") && self.var(h0).is_none() && self.form(h0).is_none() {
+            if let Some(get_self) = self.xfunction("GetSelf") {
+                let me = XExpr::Call { call: XCall { on: None, func: get_self.func, args: Vec::new() } };
+                match rest.and_then(|r| self.xfunction(r).map(|f| (r, f))) {
+                    None if rest.is_none() => return Some(me),
+                    Some((_, f)) => {
+                        let args = self.xargs(p, &f)?;
+                        return Some(XExpr::Call { call: XCall { on: Some(Box::new(me)), func: f.func, args } });
+                    }
+                    None => {}
+                }
+            }
+        }
         // `Quest.refVar.Function`: the function on the reference a quest variable holds
         // [observed: JustAssortedMods.esp, `JLM.rContainer.LNGetName`].
         if let Some((target, fname)) = w.rsplit_once('.').filter(|(t, _)| t.contains('.')) {
