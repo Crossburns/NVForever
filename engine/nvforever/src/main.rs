@@ -42,6 +42,7 @@ mod clutter_pose;
 mod cell_resets;
 mod alert;
 mod anim_sounds;
+mod cpu_placement;
 mod crash;
 mod creature_pace;
 mod creature_stance;
@@ -421,6 +422,12 @@ struct Args {
     /// --overlay is given).
     #[arg(long)]
     no_overlay: bool,
+    /// Where the game's threads run on a processor whose L3 cache is split into domains
+    /// of different sizes (dual-CCD X3D Ryzens): `auto` puts them on the largest L3,
+    /// `off` leaves them on every processor (cpu_placement.rs). Wins over NVForever.ini's
+    /// `[Settings] cpu-cache-placement` for this run; without either, `auto`.
+    #[arg(long, value_enum)]
+    cpu_cache_placement: Option<cpu_placement::Mode>,
     /// Show the frame rate counter in the top-right corner (fps_counter.rs; a switch on the
     /// settings page too). Once any setting is saved, NVForever.ini's Frame rate counter
     /// switch wins over this flag, as for every switch.
@@ -843,8 +850,13 @@ fn command_line() -> Vec<String> {
 /// bevy_app 0.20.1 `task_pool_plugin.rs`], to compare with a smaller machine's. Pipelines
 /// compile there; the game's file reads have a pool of their own, with an aid of its own
 /// (`nvf_assets::read_pool`).
-fn task_pools() -> TaskPoolPlugin {
+/// Bevy's task pools: its defaults, with a thread budget only when the game was put on
+/// the largest L3 domain (`placed`, cpu_placement.rs); `None` leaves the defaults as they are.
+fn task_pools(placed: Option<usize>) -> TaskPoolPlugin {
     let mut task_pool_options = bevy::app::TaskPoolOptions::default();
+    if let Some(n) = placed {
+        task_pool_options.max_total_threads = n;
+    }
     if let Some(n) = std::env::var("NVF_PLAY_TEST_ASYNC_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
         task_pool_options.async_compute.min_threads = n;
         task_pool_options.async_compute.max_threads = n;
@@ -865,6 +877,10 @@ fn main() -> AppExit {
     }
     let mut args = Args::parse_from(&line);
     let _ = COMMAND_LINE.set(line);
+    // On a processor with L3 domains of different sizes, the game's threads on the largest
+    // (cpu_placement.rs): before any thread pool or other thread starts, so all of them
+    // start there. Logged once the log is up.
+    let cpu_placed = cpu_placement::place(args.cpu_cache_placement);
     if args.explore {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
@@ -1262,7 +1278,7 @@ fn main() -> AppExit {
     app.set_error_handler(stray_commands::handler);
     app.add_plugins(
         DefaultPlugins
-            .set(task_pools())
+            .set(task_pools(cpu_placed.pool_threads))
             .set(ImagePlugin {
                 default_sampler: ImageSamplerDescriptor {
                     address_mode_u: ImageAddressMode::Repeat,
@@ -1437,6 +1453,7 @@ fn main() -> AppExit {
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
     .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
+    .add_systems(Startup, move || cpu_placed.report())
     .add_plugins(start_times::StartTimesPlugin)
     .add_systems(Last, (crash::note_place, crash::report_exit, stray_commands::report));
     if let Some(probe) = actor_feet::from_env() {
