@@ -471,6 +471,12 @@ fn sight_check() -> bool {
 /// [`RAY_CHUNK`] [engineering choice: fewer are cheaper on this thread].
 const PARALLEL_RAYS: usize = 32;
 const RAY_CHUNK: usize = 16;
+/// Pairs whose hostility is worked out on the compute pool before a measurement's pairs
+/// (`Game::round_hostility`): from this many, in chunks of [`HOSTILITY_CHUNK`]
+/// [engineering choice: the first hostility check of ~11,000 pairs was 10-14 ms of a
+/// 50-a-side battle's measurement on one thread, #1799].
+const PARALLEL_HOSTILITY: usize = 256;
+const HOSTILITY_CHUNK: usize = 256;
 
 /// [`clear_sight`] for every (from, to) of `rays`, in order; the rays are cast on the
 /// compute pool at once (the queries are read-only). A 50-a-side battle asked some
@@ -971,6 +977,21 @@ fn measure(
         let player_unseen = unseen() || g.toggles.detection_off;
         let ai_off: Vec<bool> = people.iter().enumerate().map(|(i, p)| i != 0 && g.ai_off(FormId(p.id))).collect();
         let ordered: Vec<(usize, usize)> = ordered.filter(|&(i, j)| !(j == 0 && player_unseen) && !ai_off[i]).collect();
+        // Who would attack whom, for every pair an NPC measures, worked out at once on the
+        // compute pool and kept for the round (`Game::round_hostility`): nothing the pairs
+        // do below changes what it reads, so each pair gets the answer it would have
+        // worked out when asked (`Game::observe_threat`).
+        {
+            let _span = info_span!("detection::hostility").entered();
+            let ids: Vec<FormId> = people.iter().map(|p| FormId(p.id)).collect();
+            g.prepare_round_hostility(&ids);
+            let asks: Vec<(FormId, FormId)> = ordered.iter().filter(|&&(i, _)| i != 0).map(|&(i, j)| (FormId(people[i].id), FormId(people[j].id))).collect();
+            let shared: &fnv_game::game::Game = g;
+            let answer = |chunk: &[(FormId, FormId)]| chunk.iter().filter_map(|&(a, b)| shared.round_hostility(a, b).map(|h| ((a, b), h))).collect::<Vec<_>>();
+            let answers: Vec<((FormId, FormId), bool)> =
+                if asks.len() < PARALLEL_HOSTILITY { answer(&asks) } else { asks.par_chunk_map(ComputeTaskPool::get(), HOSTILITY_CHUNK, |_, chunk| answer(chunk)).into_iter().flatten().collect() };
+            g.keep_round_hostility(answers);
+        }
         // The lines of sight, cast at once (`sights`): the detector's eyes to the target's
         // chest, else its eyes; for the player also the camera's, where the target is in
         // the camera's view.
