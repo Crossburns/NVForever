@@ -876,6 +876,9 @@ pub struct GameData {
     pub form_overrides: HashMap<FormId, Vec<u8>>,
     /// Each plugin's TES4 HEDR version, in load order (GetPluginHeaderVersion).
     pub plugin_versions: Vec<f32>,
+    /// Each plugin's author and description, TES4 CNAM and SNAM, `None` where the header
+    /// has none (SUP's GetModTraitSTR).
+    pub plugin_texts: Vec<(Option<String>, Option<String>)>,
     pub units: Vec<Compiled>,
     /// [`Compiled::key`] → unit (the first unit with that key), for finding a saved
     /// lambda's unit on load.
@@ -951,6 +954,9 @@ pub struct GameData {
     /// Where each inventory item form was first defined: (plugin, place among its records),
     /// for GetLoadedTypeArray's order.
     pub item_order: HashMap<FormId, (u8, u32)>,
+    /// Where each actor base (NPC_, CREA) was first defined: (plugin, place among its
+    /// records), for GetFactionMembers' order (`nvse_jg4`).
+    pub actor_order: HashMap<FormId, (u8, u32)>,
     /// OBND of the base forms that have one ([`BOUNDS_SIGS`]): min x, y, z, max x, y, z.
     pub object_bounds: HashMap<FormId, [i16; 6]>,
     /// The name the player sees (FULL) of every winning record that has one.
@@ -1809,6 +1815,15 @@ impl GameData {
             })
             .collect();
         clock.lap("item order");
+        let actor_order: HashMap<FormId, (u8, u32)> = lo
+            .index
+            .iter()
+            .filter_map(|(&g, defs)| {
+                let first = defs.first()?;
+                let r = lo.records[first.plugin as usize][first.ordinal as usize];
+                matches!(&r.header.sig, b"NPC_" | b"CREA").then_some((FormId(g), (first.plugin, first.ordinal)))
+            })
+            .collect();
         let object_bounds: HashMap<FormId, [i16; 6]> = winners
             .par_iter()
             .filter(|(_, _, r)| BOUNDS_SIGS.contains(&r.header.sig))
@@ -1827,6 +1842,7 @@ impl GameData {
             load_order: lo.plugins.iter().map(|p| p.name.clone()).collect(),
             form_overrides: lo.index.iter().filter(|(_, d)| d.len() > 1).map(|(&id, d)| (FormId(id), d.iter().map(|x| x.plugin).collect())).collect(),
             plugin_versions: lo.plugins.iter().map(|p| p.header.version).collect(),
+            plugin_texts: lo.plugins.iter().map(|p| (p.header.author.clone(), p.header.description.clone())).collect(),
             units: Vec::new(),
             unit_by_key: HashMap::new(),
             scripts: HashMap::new(),
@@ -1857,6 +1873,7 @@ impl GameData {
             edids: HashMap::new(),
             edid_of: HashMap::new(),
             item_order,
+            actor_order,
             object_bounds,
             form_flags,
             full_names: HashMap::new(),

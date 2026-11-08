@@ -77,7 +77,7 @@ fn used(g: &Game, actor: FormId) -> Option<FormId> {
 /// `items::form_type_code` gives, and ACTI 21, TACT 22, TERM 23, CONT 27, DOOR 28,
 /// FLOR 38, FURN 39 [hypothesis: the same numbering continued; a shipped idle condition
 /// asks `GetIsUsedItemType 0x15` of seated actors, furniture.md §8].
-fn used_type_code(sig: &[u8; 4]) -> Option<i32> {
+pub(crate) fn used_type_code(sig: &[u8; 4]) -> Option<i32> {
     Some(match sig {
         b"ACTI" => 21,
         b"TACT" => 22,

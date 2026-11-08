@@ -1590,13 +1590,32 @@ fn open(
     mut status: ResMut<PauseStatus>,
     mut next: ResMut<NextState<PlayState>>,
     wheel: Option<Res<crate::weapon_wheel::WeaponWheel>>,
+    (script, mut seen, mut request): (Option<Res<crate::script::ScriptState>>, Local<u64>, ResMut<PageRequest>),
 ) {
     let by_aid = fire(&mut aid.open, time.elapsed_secs());
-    if !keys.just_pressed(KeyCode::Escape) && !by_aid {
+    // ShowOff's ShowPauseMenu: each new ask opens the menu, on the page its mode names
+    // (1 load, 3 settings; the others the main page) (`fnv_game::nvse_showoff5`).
+    let asked = script.as_ref().and_then(|s| s.rt.as_ref()).map(|rt| (rt.game.showoff.b5.pause_asks, rt.game.showoff.b5.pause_mode));
+    let by_script = match asked {
+        Some((n, mode)) if n != *seen => {
+            *seen = n;
+            (n > 0 && !paused.0).then_some(mode)
+        }
+        _ => None,
+    };
+    if !keys.just_pressed(KeyCode::Escape) && !by_aid && by_script.is_none() {
         return;
     }
+    if let Some(mode) = by_script {
+        info!("pause menu: opened by ShowPauseMenu {mode}");
+        request.0 = match mode {
+            1 => Some(Page::Load { selected: 0 }),
+            3 => Some(Page::Settings { selected: 0 }),
+            _ => None,
+        };
+    }
     // Esc closes the weapon wheel (`crate::weapon_wheel`), not the game.
-    if wheel.is_some_and(|w| w.holds_input()) && !by_aid {
+    if wheel.is_some_and(|w| w.holds_input()) && !by_aid && by_script.is_none() {
         return;
     }
     if by_aid {
