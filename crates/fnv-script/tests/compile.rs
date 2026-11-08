@@ -242,6 +242,12 @@ fn extender_precedence_follows_the_operator_table() {
 }
 
 #[test]
+fn let_macro_takes_divide_and_bit_or() {
+    let l = lets("float f\nint i\nbegin GameMode\nf /= 700\ni |= 4\nend");
+    assert_eq!(l, ["(v1 Div= 700)", "(v2 BitOr= 4)"]);
+}
+
+#[test]
 fn a_functions_argument_is_an_operand() {
     // [documented: Inline Expression] `Player.GetActorValue Health + 50` is
     // (GetAV Health) + 50.

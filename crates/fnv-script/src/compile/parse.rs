@@ -67,8 +67,11 @@ pub enum Kw {
     GoTo(i32),
 }
 
-/// The assignments the Let macro takes without `let` [documented: Let Macro].
-const MACRO_OPS: [&str; 4] = ["=", "+=", "-=", "*="];
+/// The assignments the Let macro takes without `let`: `=`, `+=`, `-=`, `*=` [documented:
+/// Let Macro]; `/=` [observed: a High and Dry plugin's `x /= 700` with no `let`, compiled
+/// by the GECK to a Let (0x1539) ending in operator 0x1e, ext-syntax.md §4]; `|=`
+/// [hypothesis: a High and Dry Script Runner file uses it so; no capture yet].
+const MACRO_OPS: [&str; 6] = ["=", "+=", "-=", "*=", "/=", "|="];
 
 /// A line of the extender's grammar, by its first words.
 fn extender(l: &Line) -> Option<Kw> {
