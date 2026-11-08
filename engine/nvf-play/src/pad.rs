@@ -320,11 +320,24 @@ impl Glyph {
     }
 
     /// The glyph's coverage (0 to 1) of the pixel at `x`, `y` of a `size` square picture:
-    /// the ink of [`distance`], its edge eased over a pixel.
+    /// the ink of [`distance`] with a soft edge and an amber halo, matching the game's
+    /// fonts, which bake their glow into the glyph bitmaps [design, matched by eye to
+    /// font 7]. Distances are normalized to the picture's half side so the falloff scales
+    /// with the glyph as it is drawn.
     pub fn coverage(self, x: u32, y: u32, size: u32) -> f32 {
         let half = size as f32 / 2.0;
         let p = (Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - Vec2::splat(half)) / half;
-        (0.5 - self.distance(p) * half).clamp(0.0, 1.0)
+        // The signed distance, normalized to the picture's half side, negative inside the
+        // ink.
+        let d = self.distance(p);
+        // A solid core with a narrow soft edge: the font's stroke holds a solid band, so
+        // the glyph must too, or it reads as blurred rather than lit.
+        let x = ((d + 0.04) / 0.26).clamp(0.0, 1.0);
+        let body = 1.0 - x * x * (3.0 - 2.0 * x);
+        // A faint amber halo outside the body, the glow the fonts bake in. It fades out
+        // before the picture's edge so the tile's boundary never shows.
+        let halo = if d > 0.0 { 0.22 * (1.0 - d / 0.30).max(0.0) } else { 0.0 };
+        (body + halo).clamp(0.0, 1.0)
     }
 
     /// The glyph as a white picture, its outline in the alpha (tinted by the node's colour).
@@ -988,7 +1001,7 @@ mod tests {
     }
 
     #[test]
-    fn the_glyphs_draw_solid_and_ring_shapes() {
+    fn the_glyphs_draw_solid_and_ring_shapes_with_a_glow() {
         let n = 64;
         for g in Glyph::ALL {
             let img = g.image(n);
@@ -998,13 +1011,16 @@ mod tests {
             assert_eq!(g.coverage(0, 0, n), 0.0, "{g:?}");
             assert_eq!(Glyph::named(g.name()), Some(g));
         }
-        // The cross is solid through its middle, not a thin outline; the circle, square
-        // and triangle are rings: ink at their band, clear at the middle.
+        // The cross is solid through its middle, not a thin outline; the circle, square and
+        // triangle are rings: a clear opening at the middle (the triangle's hole is small
+        // enough that the glow reaches faintly into it, but it is not solid).
         assert!(Glyph::Cross.coverage(n / 2, n / 2, n) > 0.9);
         assert!(Glyph::Cross.coverage(n / 2 + 4, n / 2, n) > 0.5, "the cross is solid, not an outline");
-        assert_eq!(Glyph::Circle.coverage(n / 2, n / 2, n), 0.0);
-        assert_eq!(Glyph::Square.coverage(n / 2, n / 2, n), 0.0);
-        assert_eq!(Glyph::Triangle.coverage(n / 2, n / 2, n), 0.0);
+        assert!(Glyph::Circle.coverage(n / 2, n / 2, n) < 0.05);
+        assert!(Glyph::Square.coverage(n / 2, n / 2, n) < 0.05);
+        assert!(Glyph::Triangle.coverage(n / 2, n / 2, n) < 0.4, "the triangle's small hole may glow faintly");
+        // A soft glow just past the circle's ring (the falloff the fonts bake in).
+        assert!(Glyph::Circle.coverage(n / 2 + 24, n / 2, n) > 0.1, "the ring has a glow");
         assert_eq!(Glyph::of(GamepadButton::North), Some(Glyph::Triangle));
         assert_eq!(Glyph::of(GamepadButton::Start), None);
     }
