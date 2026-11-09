@@ -439,6 +439,12 @@ fn init_player(mut commands: Commands, d: Res<PlayWorld>, sim: Res<SimState>, mu
 /// when the opening opens it [owner 2026-10-17: "we should have mouse pointer in this
 /// menu"].
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+/// A menu drawn over the game by something else (the RTX Remix runtime's, Alt+X) is open:
+/// the pointer is free and shown, and the mouse does not turn the view.
+#[derive(Resource, Default)]
+pub struct OverlayMenu(pub bool);
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn grab_cursor(
     state: Res<State<PlayState>>,
     d: Res<PlayWorld>,
@@ -451,8 +457,10 @@ fn grab_cursor(
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut wanted_before: Local<Option<(bool, bool)>>,
     switches: Option<Res<crate::script_switches::ScriptSwitches>>,
+    overlay: Option<Res<OverlayMenu>>,
 ) {
     let Ok((window, mut cursor)) = windows.single_mut() else { return };
+    let overlay = overlay.is_some_and(|o| o.0);
     // A script's HUD cursor (ToggleHUDCursor, `crate::script_switches`): the pointer shows
     // over the world, free.
     let hud_cursor = switches.is_some_and(|s| s.hud_cursor) && *state.get() == PlayState::Playing;
@@ -482,7 +490,7 @@ fn grab_cursor(
         info!("pointer: {}{why}", if wanted { "shown" } else { "hidden" });
         *wanted_before = Some((wanted, film));
     }
-    let grab = playing && !driven && !boxed && window.focused && !hud_cursor;
+    let grab = playing && !driven && !boxed && window.focused && !hud_cursor && !overlay;
     // Windows cannot lock the cursor in place; confining it still gives raw motion.
     let mode = match (grab, cfg!(target_os = "windows")) {
         (false, _) => CursorGrabMode::None,
@@ -491,7 +499,7 @@ fn grab_cursor(
     };
     // Out of focus or under a test aid the mouse is the desktop's: its pointer stays. The
     // lockpicking menu hides the pointer over the lock (`crate::lockpick`).
-    let visible = !grab && (wanted || driven || !window.focused || hud_cursor) && !over_lock.is_some_and(|o| o.0);
+    let visible = overlay || (!grab && (wanted || driven || !window.focused || hud_cursor) && !over_lock.is_some_and(|o| o.0));
     if cursor.grab_mode != mode || cursor.visible != visible {
         cursor.grab_mode = mode;
         cursor.visible = visible;
@@ -743,7 +751,11 @@ fn mouse_look(
     kill_cam: Option<Res<crate::kill_cam::KillCam>>,
     assist: Option<Res<crate::aim_assist::AimAssistState>>,
     (talk, switches): (Option<Res<crate::dialogue_zoom::DialogueZoom>>, Option<Res<crate::script_switches::ScriptSwitches>>),
+    overlay: Option<Res<OverlayMenu>>,
 ) {
+    if overlay.is_some_and(|o| o.0) {
+        return;
+    }
     // The console's free camera takes the mouse (`crate::free_cam`), and so does the
     // weapon wheel while it is open (`crate::weapon_wheel`); a playing kill camera holds
     // it (`crate::kill_cam`). A script's HUD cursor has the mouse too (ToggleHUDCursor,

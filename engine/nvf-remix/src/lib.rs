@@ -119,6 +119,12 @@ pub struct InstanceAlpha {
     /// brightness (`rtx.vertexColorIsBakedLighting`). False for a real colour (unlit
     /// effects, particles).
     pub baked: bool,
+    /// The colour blend's source and destination factors (Vulkan's), for a blend other
+    /// than alpha over what is behind: SRC_ALPHA / ONE (added by alpha), ONE / ONE (added
+    /// whole), DST_COLOR / ZERO (multiplied). The runtime makes the matching blend type of
+    /// them [documented: its rtx_fork_material_derivation.cpp, with
+    /// rtx.enableEmissiveBlendModeTranslation on by default].
+    pub factors: Option<(u32, u32)>,
 }
 
 impl Remix {
@@ -470,8 +476,8 @@ impl Remix {
             alphaTestReferenceValue: a.test.unwrap_or(0),
             alphaTestCompareOp: if a.test.is_some() { VK_COMPARE_GREATER_OR_EQUAL } else { 7 },
             alphaBlendEnabled: u32::from(a.blend),
-            srcColorBlendFactor: if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE },
-            dstColorBlendFactor: if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 },
+            srcColorBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE }, |f| f.0),
+            dstColorBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 }, |f| f.1),
             colorBlendOp: 0,
             textureColorArg1Source: TA_TEXTURE,
             textureColorArg2Source: TA_VERTEX_COLOR,
@@ -481,8 +487,8 @@ impl Remix {
             textureAlphaOperation: if a.blend || a.test.is_some() { TOP_MODULATE } else { TOP_SELECT_ARG1 },
             tFactor: 0xFFFF_FFFF,
             isTextureFactorBlend: 0,
-            srcAlphaBlendFactor: if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE },
-            dstAlphaBlendFactor: if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 },
+            srcAlphaBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE }, |f| f.0),
+            dstAlphaBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 }, |f| f.1),
             alphaBlendOp: 0,
             writeMask: 0xF,
             isVertexColorBakedLighting: u32::from(a.baked),

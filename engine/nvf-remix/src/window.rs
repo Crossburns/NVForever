@@ -21,6 +21,56 @@ pub fn add_dll_dir(dir: &Path) {
     unsafe { SetDllDirectoryW(w.as_ptr()) };
 }
 
+/// The runtime's menu window (its input sink), as an isize; 0 until found.
+static SINK: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+/// The game window's own procedure, called after ours.
+static GAME_PROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+/// The runtime's menu is open (Alt+X toggles it) [documented: the runtime's
+/// rtx_options.h remixMenuKeyBinds, default Alt+X].
+static MENU_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the runtime's menu (Alt+X) is open, as the keys pressed say.
+pub fn menu_open() -> bool {
+    MENU_OPEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The game window's procedure while its raw input is shared: every WM_INPUT goes to the
+/// runtime's menu window first, then to the game's own handler; Alt+X flips the menu flag.
+unsafe extern "system" fn share_proc(h: HWND, m: u32, w: usize, l: isize) -> isize {
+    use std::sync::atomic::Ordering;
+    use windows_sys::Win32::UI::Input::{GetRawInputData, RAWINPUT, RAWINPUTHEADER, RID_INPUT, RIM_TYPEKEYBOARD};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_MENU};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CallWindowProcW, SendMessageW, WM_INPUT};
+    if m == WM_INPUT {
+        // SAFETY: the raw input handle is valid while this message is handled; the buffer
+        // is sized by the first call.
+        unsafe {
+            let mut size = 0u32;
+            let header = std::mem::size_of::<RAWINPUTHEADER>() as u32;
+            if GetRawInputData(l as _, RID_INPUT, std::ptr::null_mut(), &mut size, header) == 0 && size as usize >= std::mem::size_of::<RAWINPUTHEADER>() {
+                let mut buf = vec![0u8; size as usize];
+                if GetRawInputData(l as _, RID_INPUT, buf.as_mut_ptr().cast(), &mut size, header) == size {
+                    let ri = &*(buf.as_ptr() as *const RAWINPUT);
+                    if ri.header.dwType == RIM_TYPEKEYBOARD {
+                        let k = ri.data.keyboard;
+                        // A key going down (RI_KEY_BREAK, bit 0, clear): X with Alt held.
+                        if k.VKey == 0x58 && k.Flags & 1 == 0 && GetKeyState(i32::from(VK_MENU)) < 0 {
+                            MENU_OPEN.fetch_xor(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+            let sink = SINK.load(Ordering::Relaxed);
+            if sink != 0 {
+                SendMessageW(sink as HWND, m, w, l);
+            }
+        }
+    }
+    let prev = GAME_PROC.load(Ordering::Relaxed);
+    // SAFETY: the procedure this replaced, for every message.
+    unsafe { CallWindowProcW(std::mem::transmute::<isize, windows_sys::Win32::UI::WindowsAndMessaging::WNDPROC>(prev), h, m, w, l) }
+}
+
 /// The child window.
 pub struct Child {
     pub hwnd: HWND,
@@ -73,6 +123,51 @@ impl Child {
         self.size = s;
         // SAFETY: our own window.
         unsafe { MoveWindow(self.hwnd, 0, 0, s.0, s.1, 1) };
+        true
+    }
+
+    /// Share the mouse's and keyboard's raw input between the game and the runtime's
+    /// menu window ("RemixGuiInputSink"), once that window exists: true when done. The
+    /// runtime registers the process's raw mouse and keyboard to its window (the keyboard
+    /// without legacy key messages), and a process has one target per device, so the game
+    /// got neither mouse looks nor keys; registered back to the game's window, with key
+    /// messages, and every WM_INPUT handed on to the menu window, both get them
+    /// [documented: the runtime's rtx_overlay_window.cpp windowThreadMain and its WM_INPUT
+    /// handling; observed 2026-11-09, no movement with the menu window, no menu without].
+    pub fn share_raw_input(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        use windows_sys::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE, RIDEV_INPUTSINK};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowThreadProcessId, SetWindowLongPtrW, GWLP_WNDPROC};
+        if SINK.load(Ordering::Relaxed) != 0 {
+            return true;
+        }
+        let class = super::wide("RemixGuiInputSink");
+        // SAFETY: window lookups and registrations on this process's own windows.
+        unsafe {
+            let me = windows_sys::Win32::System::Threading::GetCurrentProcessId();
+            let mut sink: HWND = std::ptr::null_mut();
+            loop {
+                sink = FindWindowExW(std::ptr::null_mut(), sink, class.as_ptr(), std::ptr::null());
+                if sink.is_null() {
+                    return false;
+                }
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(sink, &mut pid);
+                if pid == me {
+                    break;
+                }
+            }
+            let devices = [
+                RAWINPUTDEVICE { usUsagePage: 1, usUsage: 2, dwFlags: RIDEV_INPUTSINK, hwndTarget: self.parent },
+                RAWINPUTDEVICE { usUsagePage: 1, usUsage: 6, dwFlags: RIDEV_INPUTSINK, hwndTarget: self.parent },
+            ];
+            if RegisterRawInputDevices(devices.as_ptr(), 2, std::mem::size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+                return false;
+            }
+            let prev = SetWindowLongPtrW(self.parent, GWLP_WNDPROC, share_proc as *const () as usize as isize);
+            GAME_PROC.store(prev, Ordering::Relaxed);
+            SINK.store(sink as isize, Ordering::Relaxed);
+        }
         true
     }
 

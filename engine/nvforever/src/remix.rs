@@ -40,6 +40,14 @@ impl Plugin for RemixPlugin {
         app.world_mut().insert_non_send(RemixStateCell::default());
         app.insert_resource(self.0.clone())
             .init_resource::<CpuMeshes>()
+            .init_resource::<nvf_play::player::OverlayMenu>()
+            .add_systems(PreUpdate, |mut m: ResMut<nvf_play::player::OverlayMenu>| {
+                let open = nvf_remix::window::menu_open();
+                if m.0 != open {
+                    m.0 = open;
+                    info!("remix: the runtime's menu {}", if open { "open: the pointer is free" } else { "closed" });
+                }
+            })
             .add_systems(Startup, setup_ui_overlay)
             .add_systems(PostUpdate, resize_ui_overlay)
             .init_resource::<LiveTextures>()
@@ -190,6 +198,8 @@ struct RemixState {
     started: std::time::Instant,
     why: [u32; 4],
     shot_taken: bool,
+    /// Raw input is shared with the runtime's menu window.
+    input_shared: bool,
     /// The quadratic attenuation an engine light carries (NVF_REMIX_LIGHT_A2).
     light_a2: f32,
     /// The D3D9 image hash of each uploaded texture that has one (by NVForever's hash).
@@ -493,6 +503,9 @@ struct ShapeIn<'a> {
     parent: Option<Entity>,
     /// The shape lies on another surface (a NIF decal: roads on the land, posters).
     decal: bool,
+    /// An additive shape that adds its colour whole (NiAlphaProperty ONE / ONE), not by
+    /// its alpha (`NifSurface::add_whole`).
+    add_whole: bool,
 }
 
 impl<'w, 's> Shapes<'w, 's> {
@@ -501,19 +514,19 @@ impl<'w, 's> Shapes<'w, 's> {
             q: &'a Query<ShapeParts<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>>,
             m: &'a Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>,
             out: &mut Vec<ShapeIn<'a>>,
-            decal: fn(&E) -> bool,
+            flags: fn(&E) -> (bool, bool),
         ) {
             for (entity, mesh, mat, gt, vis, shown, skinned, layers, land, parent) in q {
                 let Some(material) = m.get(mat.id()) else { continue };
-                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: decal(&material.extension) });
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: flags(&material.extension).0, add_whole: flags(&material.extension).1 });
             }
         }
         let mut out = Vec::new();
-        take(&self.nif, &self.nif_m, &mut out, |e| e.decal);
-        take(&self.leaf, &self.leaf_m, &mut out, |_| false);
-        take(&self.bark, &self.bark_m, &mut out, |_| false);
-        take(&self.bill, &self.bill_m, &mut out, |_| false);
-        take(&self.grass, &self.grass_m, &mut out, |_| false);
+        take(&self.nif, &self.nif_m, &mut out, |e| (e.decal, e.add_whole > 0.5));
+        take(&self.leaf, &self.leaf_m, &mut out, |_| (false, false));
+        take(&self.bark, &self.bark_m, &mut out, |_| (false, false));
+        take(&self.bill, &self.bill_m, &mut out, |_| (false, false));
+        take(&self.grass, &self.grass_m, &mut out, |_| (false, false));
         out
     }
 }
@@ -559,6 +572,12 @@ fn frame(
     let Some(st) = cell.state.as_mut() else { return };
     let t0 = std::time::Instant::now();
     st.child.follow();
+    // The runtime's menu (Alt+X) gets the keyboard and mouse with the game
+    // (Child::share_raw_input), once its window is up.
+    if !st.input_shared && st.child.share_raw_input() {
+        st.input_shared = true;
+        info!("remix: raw input shared with the runtime's menu window (Alt+X)");
+    }
 
     // Meshes changed since Remix got them: their Remix meshes are made again, under a
     // new generation's hash (one hash made again after its destroy did not show, as
@@ -729,7 +748,7 @@ fn frame(
     let mut unseen_built = 0usize;
     let all = shapes.all();
     terrain_materials(st, &cpu, &all);
-    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, .. } in all {
+    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, add_whole, .. } in all {
         // In the traced scene: what the camera sees, and everything the game shows within
         // `member_radius` of the eye, seen or not: a path tracer needs what is behind and
         // beside the camera for its shadows, reflections and bounced light (New Vegas RTX
@@ -872,7 +891,7 @@ fn frame(
         // edges stood through the loaded land as streaked sheets, observed 2026-11-09].
         let m = if base.depth_bias <= -50.0 { Mat4::from_translation(Vec3::new(0.0, -LOD_SINK, 0.0)) * gt.to_matrix() } else { gt.to_matrix() };
         let tr = nvf_remix::transform_from_cols(m.to_cols_array_2d());
-        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, if st.terrain.contains_key(&mesh) { None } else { instance_state(base) }).is_err() {
+        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, if st.terrain.contains_key(&mesh) { None } else { instance_state(base, add_whole) }).is_err() {
             st.errors += 1;
         }
     }
@@ -1132,7 +1151,7 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         // colour's, as Bevy draws them (the sand drifting over roads fades out by its
         // vertex alpha) [documented: remix_c.h useDrawCallAlphaState]; the state comes
         // with each instance (`instance_alpha`).
-        draw_call_alpha: !listed.1 && instance_alpha(b.alpha_mode).is_some(),
+        draw_call_alpha: !listed.1 && (instance_alpha(b.alpha_mode).is_some() || matches!(b.alpha_mode, AlphaMode::Add | AlphaMode::Multiply)),
         alpha_test,
         blend,
         tint: None,
@@ -1415,12 +1434,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
             let mut text = std::fs::read_to_string(&conf).unwrap_or_default();
             // No splash banner either ("Welcome to New Vegas RTX … Closing in", across the
             // top for 20 s) [documented: the runtime's dxvk_imgui_splash, hideSplashMessage].
-            // No input sink window for the runtime's menu: it registers the process's raw
-            // mouse and keyboard to itself (the keyboard RIDEV_NOLEGACY), and a process has
-            // one registration per device, so NVForever got neither mouse looks nor keys
-            // [documented: the runtime's rtx_overlay_window.cpp and dxvk_imgui.cpp,
-            // useNewGuiInputMethod; observed 2026-11-09, the owner could not move or press].
-            text.push_str("\n# NVForever\nrtx.automation.disableBlockingDialogBoxes = True\nrtx.hideSplashMessage = True\nrtx.useNewGuiInputMethod = False\n");
+            text.push_str("\n# NVForever\nrtx.automation.disableBlockingDialogBoxes = True\nrtx.hideSplashMessage = True\n");
             if let Some(dir) = bind_weather_presets(r, work) {
                 text.push_str(&format!("rtx.weather.presetDirectory = {}\n", dir.to_string_lossy().replace('\\', "/")));
             }
@@ -1493,6 +1507,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         started: std::time::Instant::now(),
         why: [0; 4],
         shot_taken: false,
+        input_shared: false,
         light_a2: scale("NVF_REMIX_LIGHT_A2", 0.001),
         d3d9: HashMap::new(),
         lists,
@@ -1526,8 +1541,8 @@ const LOD_SINK: f32 = 200.0;
 /// and alpha-blended ones only (glows and multiplied shapes keep their blend type).
 fn instance_alpha(mode: AlphaMode) -> Option<nvf_remix::InstanceAlpha> {
     match mode {
-        AlphaMode::Mask(t) => Some(nvf_remix::InstanceAlpha { test: Some((t * 255.0) as u8), blend: false, baked: true }),
-        AlphaMode::Blend | AlphaMode::Premultiplied => Some(nvf_remix::InstanceAlpha { test: None, blend: true, baked: true }),
+        AlphaMode::Mask(t) => Some(nvf_remix::InstanceAlpha { test: Some((t * 255.0) as u8), blend: false, baked: true, factors: None }),
+        AlphaMode::Blend | AlphaMode::Premultiplied => Some(nvf_remix::InstanceAlpha { test: None, blend: true, baked: true, factors: None }),
         _ => None,
     }
 }
@@ -1537,10 +1552,22 @@ fn instance_alpha(mode: AlphaMode) -> Option<nvf_remix::InstanceAlpha> {
 /// state of `instance_alpha` where the material has one [documented: New Vegas RTX's
 /// api_material.cpp vertex_color_blend, on every static]. Glows and multiplied shapes keep
 /// their material's blend type and get none.
-fn instance_state(b: &StandardMaterial) -> Option<nvf_remix::InstanceAlpha> {
+fn instance_state(b: &StandardMaterial, add_whole: bool) -> Option<nvf_remix::InstanceAlpha> {
+    use nvf_remix::ffi::{VK_BLEND_DST_COLOR, VK_BLEND_ONE, VK_BLEND_SRC_ALPHA, VK_BLEND_ZERO};
     match b.alpha_mode {
-        AlphaMode::Add | AlphaMode::Multiply => None,
-        m => Some(nvf_remix::InstanceAlpha { baked: !b.unlit, ..instance_alpha(m).unwrap_or(nvf_remix::InstanceAlpha { test: None, blend: false, baked: true }) }),
+        // Glows and multiplied shapes: their own blend factors, colour and alpha the
+        // texture's times the vertex colour's, the vertex colour a real colour (a tint, a
+        // fade), as New Vegas RTX sends unlit effects [documented: its api_material.cpp,
+        // "Unlit FX and particles: the vertex colour is a real colour"]. Without this state
+        // the runtime read the texture alone and the vertex fades were lost.
+        AlphaMode::Add => Some(nvf_remix::InstanceAlpha {
+            test: None,
+            blend: true,
+            baked: false,
+            factors: Some((if add_whole { VK_BLEND_ONE } else { VK_BLEND_SRC_ALPHA }, VK_BLEND_ONE)),
+        }),
+        AlphaMode::Multiply => Some(nvf_remix::InstanceAlpha { test: None, blend: true, baked: false, factors: Some((VK_BLEND_DST_COLOR, VK_BLEND_ZERO)) }),
+        m => Some(nvf_remix::InstanceAlpha { baked: !b.unlit, ..instance_alpha(m).unwrap_or(nvf_remix::InstanceAlpha { test: None, blend: false, baked: true, factors: None }) }),
     }
 }
 

@@ -344,7 +344,9 @@ pub const TA_VERTEX_COLOR: u32 = 2;
 pub const TOP_SELECT_ARG1: u32 = 1;
 pub const TOP_MODULATE: u32 = 3;
 pub const VK_COMPARE_GREATER_OR_EQUAL: u32 = 6;
+pub const VK_BLEND_ZERO: u32 = 0;
 pub const VK_BLEND_ONE: u32 = 1;
+pub const VK_BLEND_DST_COLOR: u32 = 4;
 pub const VK_BLEND_SRC_ALPHA: u32 = 6;
 pub const VK_BLEND_ONE_MINUS_SRC_ALPHA: u32 = 7;
 
