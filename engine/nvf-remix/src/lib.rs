@@ -286,6 +286,46 @@ impl Remix {
         Ok(h)
     }
 
+    /// A translucent material (water, glass): light passes through tinted by `color` over
+    /// `distance` scene units, bent by `ior`; `normal` an optional normal map.
+    pub fn create_translucent_material(&self, hash: u64, color: [f32; 3], distance: f32, ior: f32, normal: Option<u64>) -> Result<MaterialHandle, Error> {
+        let Some(f) = self.api.CreateMaterial else { return Err(Error { call: "CreateMaterial", code: -1 }) };
+        let none = [0u16];
+        let normal = normal.map(texture_ref);
+        let mut ext = MaterialInfoTranslucentEXT {
+            sType: ST_MATERIAL_INFO_TRANSLUCENT_EXT,
+            pNext: std::ptr::null_mut(),
+            transmittanceTexture: none.as_ptr(),
+            refractiveIndex: ior,
+            transmittanceColor: color.into(),
+            transmittanceMeasurementDistance: distance,
+            thinWallThickness_hasvalue: 0,
+            thinWallThickness_value: 0.0,
+            useDiffuseLayer: 0,
+        };
+        let info = MaterialInfo {
+            sType: ST_MATERIAL_INFO,
+            pNext: (&mut ext as *mut MaterialInfoTranslucentEXT).cast(),
+            hash,
+            albedoTexture: none.as_ptr(),
+            normalTexture: normal.as_ref().map_or(none.as_ptr(), |w| w.as_ptr()),
+            tangentTexture: none.as_ptr(),
+            emissiveTexture: none.as_ptr(),
+            emissiveIntensity: 0.0,
+            emissiveColorConstant: Float3D::default(),
+            spriteSheetRow: 1,
+            spriteSheetCol: 1,
+            spriteSheetFps: 0,
+            filterMode: 1,
+            wrapModeU: 0,
+            wrapModeV: 0,
+        };
+        let mut h = std::ptr::null_mut();
+        // SAFETY: info chain and strings valid for the call.
+        check("CreateMaterial", unsafe { f(&info, &mut h) })?;
+        Ok(h)
+    }
+
     pub fn destroy_material(&self, h: MaterialHandle) {
         if let Some(f) = self.api.DestroyMaterial {
             // SAFETY: a handle this runtime made.

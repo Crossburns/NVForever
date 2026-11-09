@@ -271,6 +271,8 @@ struct Shapes<'w, 's> {
     bill_m: Res<'w, Assets<crate::tree::BillboardMaterial>>,
     grass: Query<'w, 's, ShapeParts<crate::grass::GrassMaterial>>,
     grass_m: Res<'w, Assets<crate::grass::GrassMaterial>>,
+    water: Query<'w, 's, (&'static Mesh3d, &'static MeshMaterial3d<crate::water::WaterMaterial>, &'static GlobalTransform, &'static ViewVisibility)>,
+    water_m: Res<'w, Assets<crate::water::WaterMaterial>>,
 }
 
 /// One shape, whatever its material type.
@@ -560,6 +562,58 @@ fn frame(
         };
         let tr = nvf_remix::transform_from_cols(gt.to_matrix().to_cols_array_2d());
         if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones).is_err() {
+            st.errors += 1;
+        }
+    }
+
+    // Water: a translucent surface in the water type's colours [design: Remix's own
+    // translucency stands in for NVForever's screen-space water shader].
+    for (mesh, mat, gt, vis) in &shapes.water {
+        if !vis.get() {
+            continue;
+        }
+        let key = (mesh.id(), mat.id().untyped());
+        let handle = match st.meshes.get(&key) {
+            Some(h) => *h,
+            None => {
+                let Some(data) = cpu.by_id.get(&mesh.id()).cloned() else { continue };
+                let Some(w) = shapes.water_m.get(mat.id()) else { continue };
+                let rm = match st.materials.get(&key.1) {
+                    Some(h) => *h,
+                    None => {
+                        // The shallow colour's hue as what the water lets through over
+                        // 3000 units (about 40 m) [hypothesis: tuned by eye against
+                        // NVForever's own water; brightest channel 1, so only the hue
+                        // tints].
+                        let c = w.params.shallow;
+                        let m = c.x.max(c.y).max(c.z).max(1e-3);
+                        info!("remix: water {:?} shallow {:?}", key.1, c);
+                        match st.remix.create_translucent_material(hash_of(&key.1), [c.x / m, c.y / m, c.z / m], 3000.0, 1.33, None) {
+                            Ok(h) => {
+                                st.materials.insert(key.1, h);
+                                h
+                            }
+                            Err(_) => {
+                                st.errors += 1;
+                                continue;
+                            }
+                        }
+                    }
+                };
+                match st.remix.create_mesh(hash_of(&key), &data.verts, &data.idx, rm) {
+                    Ok(h) => {
+                        st.meshes.insert(key, h);
+                        h
+                    }
+                    Err(_) => {
+                        st.errors += 1;
+                        continue;
+                    }
+                }
+            }
+        };
+        let tr = nvf_remix::transform_from_cols(gt.to_matrix().to_cols_array_2d());
+        if st.remix.draw_instance(handle, &tr, ffi::CATEGORY_ANIMATED_WATER, true).is_err() {
             st.errors += 1;
         }
     }

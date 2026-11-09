@@ -35,6 +35,8 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   an RGBA image with a transparent background; a GPU readback of it each frame goes to
   Remix's screen overlay (`DrawScreenOverlay`), over the traced image. Menus with their
   own cameras draw into images instead (below).
+- **Water.** A translucent Remix material (refractive index 1.33) in the water type's
+  shallow colour's hue, absorbing over about 3000 units, drawn as animated water.
 - **Screens.** An image Bevy renders into (the Pip-Boy's screen, a terminal's) is read
   back from the GPU each frame and replaced in place in Remix (the host-import
   extension's REPLACE flag); an unlit material (a screen) is sent as emissive with its
@@ -52,7 +54,8 @@ they are (`DEFAULT_MODS_DIR`). NVForever writes nothing into the install or the 
 
 ## Not yet
 
-- Water, NVForever's sky meshes (Remix draws its own sky), particles.
+- Water waves (the surface is flat), NVForever's sky meshes (Remix draws its own sky),
+  particles.
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.
 

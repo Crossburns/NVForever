@@ -86,6 +86,7 @@ pub const CATEGORY_WORLD_MATTE: u32 = 1 << 1;
 pub const CATEGORY_SKY: u32 = 1 << 2;
 pub const CATEGORY_IGNORE: u32 = 1 << 3;
 pub const CATEGORY_IGNORE_LIGHTS: u32 = 1 << 4;
+pub const CATEGORY_ANIMATED_WATER: u32 = 1 << 17;
 pub const CATEGORY_THIRD_PERSON_PLAYER_MODEL: u32 = 1 << 18;
 pub const CATEGORY_THIRD_PERSON_PLAYER_BODY: u32 = 1 << 19;
 pub const CATEGORY_VIEW_MODEL: u32 = 1 << 26;
@@ -186,6 +187,19 @@ pub struct MaterialInfoTerrainLayersEXT {
     pub weightUvOffset: Float2D,
     pub normalsRgbTangentSpace: Bool,
     pub heightTextures: [Path; TERRAIN_MAX_LAYERS],
+}
+
+#[repr(C)]
+pub struct MaterialInfoTranslucentEXT {
+    pub sType: u32,
+    pub pNext: *mut c_void,
+    pub transmittanceTexture: Path,
+    pub refractiveIndex: f32,
+    pub transmittanceColor: Float3D,
+    pub transmittanceMeasurementDistance: f32,
+    pub thinWallThickness_hasvalue: Bool,
+    pub thinWallThickness_value: f32,
+    pub useDiffuseLayer: Bool,
 }
 
 #[repr(C)]
