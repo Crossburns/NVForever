@@ -1,6 +1,7 @@
 # RTX Remix as NVForever's renderer
 
-`nvforever --remix <Remix install>\trex\d3d9.dll` (or `NVF_REMIX`) renders the world
+`nvforever --remix <Remix install>\trex\d3d9.dll` (or `NVF_REMIX`, or `[Render]
+Remix=<that path>` in NVForever.ini) renders the world
 with NVIDIA RTX Remix's path tracer. The runtime is loaded into NVForever's own process
 and driven through its C API (`remix_c.h`); there is no Direct3D 9, no bridge process and
 no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe wrapper;
