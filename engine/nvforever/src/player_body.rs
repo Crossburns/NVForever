@@ -893,6 +893,14 @@ pub struct PlayerBody {
 }
 
 impl PlayerBody {
+    /// The entities the third-person body draws (its shapes and add-ons), and whether the
+    /// view is from inside it (first person): what RTX Remix takes as the player's body
+    /// (`crate::remix`).
+    pub(crate) fn third_person_shapes(&self) -> (bool, Vec<Entity>) {
+        let first_person = self.head_eye.is_none();
+        (first_person, self.body.as_ref().map(|b| b.third.drawn.iter().map(|d| d.entity).collect()).unwrap_or_default())
+    }
+
     /// [design: show_rigs] Add-ons follow the part at their attachment, with the body
     /// as the fallback for an attachment outside the known skeleton.
     pub(crate) fn effect_part(&self, attachment: Entity) -> EffectPart {

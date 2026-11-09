@@ -36,6 +36,8 @@ pub const ST_LIGHT_INFO_DISTANT_EXT: u32 = 7;
 pub const ST_LIGHT_INFO_SPHERE_EXT: u32 = 11;
 pub const ST_MESH_INFO: u32 = 12;
 pub const ST_INSTANCE_INFO: u32 = 13;
+pub const ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT: u32 = 14;
+pub const MAX_BONES: usize = 256;
 pub const ST_CAMERA_INFO: u32 = 16;
 pub const ST_CAMERA_INFO_PARAMETERIZED_EXT: u32 = 17;
 pub const ST_STARTUP_INFO: u32 = 22;
@@ -81,6 +83,9 @@ pub const CATEGORY_WORLD_MATTE: u32 = 1 << 1;
 pub const CATEGORY_SKY: u32 = 1 << 2;
 pub const CATEGORY_IGNORE: u32 = 1 << 3;
 pub const CATEGORY_IGNORE_LIGHTS: u32 = 1 << 4;
+pub const CATEGORY_THIRD_PERSON_PLAYER_MODEL: u32 = 1 << 18;
+pub const CATEGORY_THIRD_PERSON_PLAYER_BODY: u32 = 1 << 19;
+pub const CATEGORY_VIEW_MODEL: u32 = 1 << 26;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -252,6 +257,14 @@ pub struct InstanceInfo {
     pub mesh: MeshHandle,
     pub transform: Transform,
     pub doubleSided: Bool,
+}
+
+#[repr(C)]
+pub struct InstanceInfoBoneTransformsEXT {
+    pub sType: u32,
+    pub pNext: *mut c_void,
+    pub boneTransforms_values: *const Transform,
+    pub boneTransforms_count: u32,
 }
 
 #[repr(C)]

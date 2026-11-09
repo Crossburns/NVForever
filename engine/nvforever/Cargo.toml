@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 bevy.workspace = true
 nvf-assets.workspace = true
+nvf-remix = { path = "../nvf-remix" }
+raw-window-handle = "0.6"
 fnv-nif.workspace = true
 fnv-esm.workspace = true
 fnv-world.workspace = true

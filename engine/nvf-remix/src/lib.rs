@@ -6,6 +6,10 @@
 //!
 //! Every call goes to the thread that started the runtime; [`Remix`] is not `Send`.
 
+// The API's handles are opaque tokens the runtime made; this crate passes them back and
+// never dereferences them.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 pub mod ffi;
 #[cfg(windows)]
 pub mod window;
@@ -249,13 +253,24 @@ impl Remix {
 
     /// A mesh of one surface.
     pub fn create_mesh(&self, hash: u64, vertices: &[HardcodedVertex], indices: &[u32], material: MaterialHandle) -> Result<MeshHandle, Error> {
+        self.create_mesh_skinned(hash, vertices, indices, material, None)
+    }
+
+    /// A mesh of one surface, skinned when `skin` gives (bones per vertex, weights,
+    /// bone indices), `bones per vertex` of each per vertex [documented: the runtime's
+    /// rtx_remix_api.cpp reads `vertex * bonesPerVertex`].
+    pub fn create_mesh_skinned(&self, hash: u64, vertices: &[HardcodedVertex], indices: &[u32], material: MaterialHandle, skin: Option<(u32, &[f32], &[u32])>) -> Result<MeshHandle, Error> {
+        let skinning_value = match skin {
+            Some((n, w, i)) => MeshInfoSkinning { bonesPerVertex: n, blendWeights_values: w.as_ptr(), blendWeights_count: w.len() as u32, blendIndices_values: i.as_ptr(), blendIndices_count: i.len() as u32 },
+            None => MeshInfoSkinning { bonesPerVertex: 0, blendWeights_values: std::ptr::null(), blendWeights_count: 0, blendIndices_values: std::ptr::null(), blendIndices_count: 0 },
+        };
         let surface = MeshInfoSurfaceTriangles {
             vertices_values: vertices.as_ptr(),
             vertices_count: vertices.len() as u64,
             indices_values: indices.as_ptr(),
             indices_count: indices.len() as u64,
-            skinning_hasvalue: 0,
-            skinning_value: MeshInfoSkinning { bonesPerVertex: 0, blendWeights_values: std::ptr::null(), blendWeights_count: 0, blendIndices_values: std::ptr::null(), blendIndices_count: 0 },
+            skinning_hasvalue: u32::from(skin.is_some()),
+            skinning_value,
             material,
         };
         let info = MeshInfo { sType: ST_MESH_INFO, pNext: std::ptr::null_mut(), hash, surfaces_values: &surface, surfaces_count: 1 };
@@ -301,7 +316,14 @@ impl Remix {
     }
 
     pub fn draw_instance(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool) -> Result<(), Error> {
-        let info = InstanceInfo { sType: ST_INSTANCE_INFO, pNext: std::ptr::null_mut(), categoryFlags: categories, mesh, transform: *transform, doubleSided: u32::from(double_sided) };
+        self.draw_instance_skinned(mesh, transform, categories, double_sided, &[])
+    }
+
+    /// An instance posed by `bones` (object space, at most [`MAX_BONES`]; none: unposed).
+    pub fn draw_instance_skinned(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, bones: &[Transform]) -> Result<(), Error> {
+        let mut ext = InstanceInfoBoneTransformsEXT { sType: ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT, pNext: std::ptr::null_mut(), boneTransforms_values: bones.as_ptr(), boneTransforms_count: bones.len().min(MAX_BONES) as u32 };
+        let next = if bones.is_empty() { std::ptr::null_mut() } else { (&mut ext as *mut InstanceInfoBoneTransformsEXT).cast() };
+        let info = InstanceInfo { sType: ST_INSTANCE_INFO, pNext: next, categoryFlags: categories, mesh, transform: *transform, doubleSided: u32::from(double_sided) };
         // SAFETY: checked present in load.
         check("DrawInstance", unsafe { (self.api.DrawInstance.unwrap_unchecked())(&info) })
     }
@@ -325,7 +347,7 @@ impl Remix {
         // The runtime refuses a direction that is not of unit length (INVALID_ARGUMENTS)
         // [observed: the smoke example, 2026-11-09].
         let l = (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]).sqrt();
-        if !(l > 1e-6) {
+        if l.is_nan() || l <= 1e-6 {
             return Err(Error { call: "CreateLight", code: 3 });
         }
         let direction = [direction[0] / l, direction[1] / l, direction[2] / l];

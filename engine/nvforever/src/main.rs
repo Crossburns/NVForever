@@ -24,6 +24,8 @@ macro_rules! eprintln {
 }
 
 mod activators;
+#[cfg(windows)]
+mod remix;
 mod nif_mirror;
 mod anim_paths;
 mod actor_feet;
@@ -422,6 +424,11 @@ struct Args {
     /// --overlay is given).
     #[arg(long)]
     no_overlay: bool,
+    /// Render with RTX Remix: the path of a Remix runtime `d3d9.dll` (an install's
+    /// `trex\d3d9.dll`; also `NVF_REMIX`). The runtime runs inside NVForever
+    /// (docs/design/remix.md).
+    #[arg(long, value_name = "D3D9_DLL", env = "NVF_REMIX")]
+    remix: Option<std::path::PathBuf>,
     /// Where the game's threads run on a processor whose L3 cache is split into domains
     /// of different sizes (dual-CCD X3D Ryzens): `auto` puts them on the largest L3,
     /// `off` leaves them on every processor (cpu_placement.rs). Wins over NVForever.ini's
@@ -1484,6 +1491,10 @@ fn main() -> AppExit {
     }
     if args.no_messages {
         app.insert_resource(nvf_play::script::NoMessages);
+    }
+    #[cfg(windows)]
+    if let Some(dll) = args.remix.clone() {
+        app.add_plugins(remix::RemixPlugin(remix::RemixConfig { dll }));
     }
     app.insert_resource(nvf_play::voice::VoiceSettings { play: !args.no_voice, volume: args.voice_volume, ..Default::default() });
     app.insert_resource(nvf_play::sfx::SfxSettings { play: !args.no_sound, reverb: !args.no_reverb, ..Default::default() });

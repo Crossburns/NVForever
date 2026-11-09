@@ -7,8 +7,12 @@ use std::path::Path;
 
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, SetDllDirectoryW};
+use windows_sys::Win32::Graphics::Gdi::{
+    BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, SRCCOPY,
+};
+use windows_sys::Win32::Foundation::POINT;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, MoveWindow, RegisterClassW, CS_OWNDC, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_DISABLED, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, MoveWindow, RegisterClassW, SetForegroundWindow, CS_OWNDC, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_DISABLED, WS_VISIBLE,
 };
 
 /// Put `dir` on the DLL search path (the runtime's own DLLs beside it).
@@ -75,6 +79,52 @@ impl Child {
 
     pub fn size(&self) -> (i32, i32) {
         self.size
+    }
+
+    /// Bring the parent to the front (a test aid, before [`Child::capture_bmp`]).
+    pub fn raise(&self) {
+        // SAFETY: a window handle.
+        unsafe { SetForegroundWindow(self.parent) };
+    }
+
+    /// The child's pixels as the screen shows them, as a 32-bit BMP file (a test aid: the
+    /// window must be in front).
+    pub fn capture_bmp(&self) -> Vec<u8> {
+        let (w, h) = self.size;
+        // SAFETY: GDI calls on our own window's screen area, objects freed after.
+        unsafe {
+            let mut p = POINT { x: 0, y: 0 };
+            ClientToScreen(self.hwnd, &mut p);
+            let screen = GetDC(std::ptr::null_mut());
+            let mem = CreateCompatibleDC(screen);
+            let bmp = CreateCompatibleBitmap(screen, w, h);
+            SelectObject(mem, bmp);
+            BitBlt(mem, 0, 0, w, h, screen, p.x, p.y, SRCCOPY);
+            let mut bi: BITMAPINFO = std::mem::zeroed();
+            bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bi.bmiHeader.biWidth = w;
+            bi.bmiHeader.biHeight = h;
+            bi.bmiHeader.biPlanes = 1;
+            bi.bmiHeader.biBitCount = 32;
+            let mut buf = vec![0u8; (w * h * 4).max(0) as usize];
+            GetDIBits(mem, bmp, 0, h as u32, buf.as_mut_ptr().cast(), &mut bi, DIB_RGB_COLORS);
+            DeleteObject(bmp);
+            DeleteDC(mem);
+            ReleaseDC(std::ptr::null_mut(), screen);
+            let mut f = Vec::with_capacity(54 + buf.len());
+            f.extend_from_slice(b"BM");
+            f.extend_from_slice(&(54 + buf.len() as u32).to_le_bytes());
+            f.extend_from_slice(&[0; 4]);
+            f.extend_from_slice(&54u32.to_le_bytes());
+            f.extend_from_slice(&40u32.to_le_bytes());
+            f.extend_from_slice(&w.to_le_bytes());
+            f.extend_from_slice(&h.to_le_bytes());
+            f.extend_from_slice(&1u16.to_le_bytes());
+            f.extend_from_slice(&32u16.to_le_bytes());
+            f.extend_from_slice(&[0; 24]);
+            f.extend_from_slice(&buf);
+            f
+        }
     }
 }
 

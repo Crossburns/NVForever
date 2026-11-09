@@ -4647,6 +4647,8 @@ dependencies = [
  "half",
  "nvf-assets",
  "nvf-play",
+ "nvf-remix",
+ "raw-window-handle",
  "rfd",
  "serde_json",
  "texpresso",
