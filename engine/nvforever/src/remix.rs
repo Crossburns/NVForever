@@ -41,7 +41,8 @@ impl Plugin for RemixPlugin {
         app.insert_resource(self.0.clone())
             .init_resource::<CpuMeshes>()
             .add_systems(Startup, setup_ui_overlay)
-            .add_systems(PostUpdate, (take_new_meshes, take_new_images).after(AssetEventSystems))
+            .init_resource::<LiveTextures>()
+            .add_systems(PostUpdate, ((take_new_meshes, take_new_images), watch_live_textures).chain().after(AssetEventSystems))
             .add_systems(Last, (frame, shut_down_on_exit).chain());
     }
 }
@@ -54,6 +55,8 @@ struct CpuMeshes {
     pending_images: Vec<(AssetId<Image>, Arc<PendingImage>)>,
     /// Images that cannot become Remix textures (format, no pixels).
     skipped_images: Vec<AssetId<Image>>,
+    /// Images drawn into on the GPU (screens: the Pip-Boy's, terminals'), not yet watched.
+    new_live: Vec<AssetId<Image>>,
 }
 
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
@@ -185,6 +188,7 @@ fn remix_format(f: TextureFormat) -> Option<(u32, u32)> {
         TextureFormat::Rgba8Unorm => (ffi::FORMAT_R8G8B8A8_UNORM, 0),
         TextureFormat::Rgba8UnormSrgb => (ffi::FORMAT_R8G8B8A8_SRGB, 0),
         TextureFormat::Bgra8Unorm => (ffi::FORMAT_B8G8R8A8_UNORM, 0),
+        TextureFormat::Bgra8UnormSrgb => (ffi::FORMAT_B8G8R8A8_SRGB, 0),
         TextureFormat::Bc1RgbaUnorm => (ffi::FORMAT_BC1_RGB_UNORM, ffi::VK_BC1_RGBA_UNORM),
         TextureFormat::Bc1RgbaUnormSrgb => (ffi::FORMAT_BC1_RGB_SRGB, ffi::VK_BC1_RGBA_SRGB),
         TextureFormat::Bc2RgbaUnorm => (ffi::FORMAT_BC3_UNORM, ffi::VK_BC2_UNORM),
@@ -199,17 +203,37 @@ fn remix_format(f: TextureFormat) -> Option<(u32, u32)> {
     })
 }
 
-fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<Image>>, server: Res<AssetServer>, mut cpu: ResMut<CpuMeshes>) {
+fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<Image>>, server: Res<AssetServer>, mut cpu: ResMut<CpuMeshes>, ui: Option<Res<UiOverlay>>) {
     for e in ev.read() {
         let (AssetEvent::Added { id } | AssetEvent::Modified { id }) = e else { continue };
+        if ui.as_ref().is_some_and(|u| u.image == *id) {
+            continue;
+        }
         let Some(img) = images.get(*id) else { continue };
         let d = &img.texture_descriptor;
+        // A render target (a screen drawn every frame: the Pip-Boy's, a terminal's), with
+        // or without first pixels: read back each frame (live_textures).
+        if d.usage.contains(bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT)
+            && d.dimension == bevy::render::render_resource::TextureDimension::D2
+            && matches!(d.format, TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb | TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb)
+        {
+            if matches!(e, AssetEvent::Added { .. }) {
+                cpu.new_live.push(*id);
+            }
+            continue;
+        }
         if d.dimension != bevy::render::render_resource::TextureDimension::D2 || d.size.depth_or_array_layers != 1 || remix_format(d.format).is_none() {
             cpu.skipped_images.push(*id);
             continue;
         }
         let Some(data) = img.data.clone() else {
-            cpu.skipped_images.push(*id);
+            // A render target in a format Remix takes: read back each frame (live_textures).
+            let rt = d.usage.contains(bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT);
+            if rt && matches!(d.format, TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb | TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb) {
+                cpu.new_live.push(*id);
+            } else {
+                cpu.skipped_images.push(*id);
+            }
             continue;
         };
         let normal = server.get_path(*id).is_some_and(|p| {
@@ -298,6 +322,7 @@ fn frame(
     shapes: Shapes,
     joints: Query<&GlobalTransform>,
     ui: Option<Res<UiOverlay>>,
+    live: Res<LiveTextures>,
     bindposes: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     meshes_all: Res<Assets<Mesh>>,
     points: Query<(Entity, &PointLight, &GlobalTransform, &InheritedVisibility)>,
@@ -339,7 +364,7 @@ fn frame(
             st.failed_textures.insert(hash);
             continue;
         };
-        let t = nvf_remix::TextureData { hash, width: img.width, height: img.height, mips: img.mips, format, data: &img.data, vk_format: vk, encoding: if img.normal { ffi::ENCODING_NORMAL_TANGENT_XY } else { ffi::ENCODING_NONE } };
+        let t = nvf_remix::TextureData { hash, width: img.width, height: img.height, mips: img.mips, format, data: &img.data, vk_format: vk, encoding: if img.normal { ffi::ENCODING_NORMAL_TANGENT_XY } else { ffi::ENCODING_NONE }, replace: false };
         match st.remix.create_texture(&t) {
             Ok(_) => {
                 st.textures.insert(hash);
@@ -349,6 +374,31 @@ fn frame(
                 st.failed_textures.insert(hash);
                 if st.errors < 20 {
                     warn!("remix: {e} ({}x{} {:?})", img.width, img.height, img.format);
+                }
+            }
+        }
+    }
+
+    // Screens drawn every frame: their latest pixels, in place after the first upload.
+    if let Ok(mut live) = live.0.lock() {
+        for (id, l) in live.iter_mut() {
+            let Some(px) = l.pixels.take() else { continue };
+            let hash = hash_of(id);
+            let t = nvf_remix::TextureData { hash, width: l.width, height: l.height, mips: 1, format: l.format, data: &px, vk_format: 0, encoding: 0, replace: st.textures.contains(&hash) };
+            let first = !st.textures.contains(&hash);
+            match st.remix.create_texture(&t) {
+                Ok(_) => {
+                    if first {
+                        info!("remix: live texture {id:?} {}x{} uploaded", l.width, l.height);
+                    }
+                    st.textures.insert(hash);
+                    st.failed_textures.remove(&hash);
+                }
+                Err(e) => {
+                    st.errors += 1;
+                    if first {
+                        warn!("remix: live texture {id:?}: {e}");
+                    }
                 }
             }
         }
@@ -470,7 +520,17 @@ fn frame(
                     continue;
                 };
                 let skin = data.skin.as_ref().map(|(w, j)| (4u32, w.as_slice(), j.as_slice()));
-                match st.remix.create_mesh_skinned(hash_of(&key), &data.verts, &data.idx, rm, skin) {
+                // The material's UV transform, baked in: Remix's materials have none (the
+                // Pip-Boy's screen shows a part of its canvas through one).
+                let t = base.uv_transform;
+                let moved: Vec<HardcodedVertex>;
+                let verts: &[HardcodedVertex] = if t == bevy::math::Affine2::IDENTITY {
+                    &data.verts
+                } else {
+                    moved = data.verts.iter().map(|v| HardcodedVertex { texcoord: t.transform_point2(Vec2::from(v.texcoord)).to_array(), ..*v }).collect();
+                    &moved
+                };
+                match st.remix.create_mesh_skinned(hash_of(&key), verts, &data.idx, rm, skin) {
                     Ok(h) => {
                         st.meshes.insert(key, h);
                         h
@@ -627,9 +687,11 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         hash: hash_of(&id),
         albedo: tex(&b.base_color_texture),
         normal: tex(&b.normal_map_texture),
-        emissive: tex(&b.emissive_texture),
-        emissive_intensity: if e.red + e.green + e.blue > 0.0 { 1.0 } else { 0.0 },
-        emissive_color: [e.red, e.green, e.blue],
+        // An unlit surface (a screen) glows with its own picture [design: Remix lights
+        // every surface; emission is how a picture shows unlit].
+        emissive: if b.unlit { tex(&b.base_color_texture) } else { tex(&b.emissive_texture) },
+        emissive_intensity: if b.unlit || e.red + e.green + e.blue > 0.0 { 1.0 } else { 0.0 },
+        emissive_color: if b.unlit { [c.red, c.green, c.blue] } else { [e.red, e.green, e.blue] },
         albedo_constant: [c.red, c.green, c.blue],
         opacity: c.alpha,
         roughness: b.perceptual_roughness,
@@ -748,6 +810,7 @@ fn shut_down_on_exit(mut exit: MessageReader<AppExit>, cell: Option<NonSendMut<R
 /// the default UI camera, with a transparent background.
 #[derive(Resource)]
 struct UiOverlay {
+    image: AssetId<Image>,
     size: (u32, u32),
     pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
 }
@@ -761,6 +824,7 @@ fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, w
     let mut image = Image::new_uninit(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
     image.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::RENDER_ATTACHMENT;
     let image = images.add(image);
+    let image_id = image.id();
     commands.spawn((
         Name::new("Remix UI camera"),
         Camera2d,
@@ -786,7 +850,7 @@ fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, w
             *p = Some(out);
         }
     });
-    commands.insert_resource(UiOverlay { size: (w, h), pixels });
+    commands.insert_resource(UiOverlay { image: image_id, size: (w, h), pixels });
 }
 
 /// Each land quadrant's base mesh with the blended layer meshes over it (same vertex grid:
@@ -858,7 +922,7 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
             }
             let hashes = [hash_of(&(b.mesh, 0u8)), hash_of(&(b.mesh, 1u8))];
             for (h, data) in hashes.iter().zip(w.iter()) {
-                let t = nvf_remix::TextureData { hash: *h, width: n as u32, height: n as u32, mips: 1, format: ffi::FORMAT_R8G8B8A8_UNORM, data, vk_format: 0, encoding: 0 };
+                let t = nvf_remix::TextureData { hash: *h, width: n as u32, height: n as u32, mips: 1, format: ffi::FORMAT_R8G8B8A8_UNORM, data, vk_format: 0, encoding: 0, replace: false };
                 if st.remix.create_texture(&t).is_err() {
                     st.errors += 1;
                     ok = false;
@@ -906,5 +970,53 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
                 Err(_) => st.errors += 1,
             }
         }
+    }
+}
+
+/// Render-target images read back each frame for Remix (`take_new_images` finds them).
+#[derive(Resource, Default)]
+struct LiveTextures(Arc<std::sync::Mutex<HashMap<AssetId<Image>, LiveTexture>>>);
+
+struct LiveTexture {
+    width: u32,
+    height: u32,
+    format: u32,
+    pixels: Option<Vec<u8>>,
+}
+
+fn watch_live_textures(mut commands: Commands, mut cpu: ResMut<CpuMeshes>, mut images: ResMut<Assets<Image>>, live: Res<LiveTextures>) {
+    use bevy::render::gpu_readback::{Readback, ReadbackComplete};
+    for id in std::mem::take(&mut cpu.new_live) {
+        // A GPU copy out of the image needs it marked copyable (Bevy's render targets are
+        // not) [observed: wgpu validation, COPY_SRC missing].
+        if let Some(mut img) = images.get_mut(id) {
+            img.texture_descriptor.usage |= bevy::render::render_resource::TextureUsages::COPY_SRC;
+        }
+        let Some(img) = images.get(id) else { continue };
+        let d = &img.texture_descriptor;
+        let (w, h) = (d.size.width, d.size.height);
+        let format = match d.format {
+            TextureFormat::Rgba8UnormSrgb => ffi::FORMAT_R8G8B8A8_SRGB,
+            TextureFormat::Bgra8Unorm => ffi::FORMAT_B8G8R8A8_UNORM,
+            TextureFormat::Bgra8UnormSrgb => ffi::FORMAT_B8G8R8A8_SRGB,
+            _ => ffi::FORMAT_R8G8B8A8_UNORM,
+        };
+        let Some(handle) = images.get_strong_handle(id) else { continue };
+        if let Ok(mut l) = live.0.lock() {
+            l.insert(id, LiveTexture { width: w, height: h, format, pixels: None });
+        }
+        let sink = live.0.clone();
+        // Rows come back padded to 256 bytes (as for the UI overlay).
+        let row = (w * 4) as usize;
+        let stride = row.div_ceil(256) * 256;
+        commands.spawn(Readback::texture(handle)).observe(move |ev: On<ReadbackComplete>| {
+            let data = &ev.data;
+            let out: Vec<u8> = if stride == row { data.clone() } else { data.chunks(stride).take(h as usize).flat_map(|r| r[..row.min(r.len())].iter().copied()).collect() };
+            if let Ok(mut l) = sink.lock() {
+                if let Some(t) = l.get_mut(&id) {
+                    t.pixels = Some(out);
+                }
+            }
+        });
     }
 }

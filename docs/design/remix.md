@@ -34,7 +34,11 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
 - **HUD and menus.** A 2D camera, the default UI camera, draws Bevy's interface into
   an RGBA image with a transparent background; a GPU readback of it each frame goes to
   Remix's screen overlay (`DrawScreenOverlay`), over the traced image. Menus with their
-  own cameras (Pip-Boy screen, terminals) are not on it yet.
+  own cameras draw into images instead (below).
+- **Screens.** An image Bevy renders into (the Pip-Boy's screen, a terminal's) is read
+  back from the GPU each frame and replaced in place in Remix (the host-import
+  extension's REPLACE flag); an unlit material (a screen) is sent as emissive with its
+  own picture, a material's UV transform baked into the mesh's texture coordinates.
 - **The player.** In first person the third-person body is not sent (Remix's
   player-model masking follows Portal's camera and still showed the head); shapes only
   on the shadow layer go as Remix's third-person player model.

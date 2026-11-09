@@ -66,6 +66,7 @@ pub const VK_BC5_UNORM: u32 = 141;
 pub const FORMAT_R8G8B8A8_UNORM: u32 = 37;
 pub const FORMAT_R8G8B8A8_SRGB: u32 = 43;
 pub const FORMAT_B8G8R8A8_UNORM: u32 = 44;
+pub const FORMAT_B8G8R8A8_SRGB: u32 = 50;
 pub const FORMAT_BC1_RGB_UNORM: u32 = 131;
 pub const FORMAT_BC1_RGB_SRGB: u32 = 132;
 pub const FORMAT_BC3_UNORM: u32 = 135;

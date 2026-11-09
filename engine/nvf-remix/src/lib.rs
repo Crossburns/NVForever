@@ -78,6 +78,9 @@ pub struct TextureData<'a> {
     pub vk_format: u32,
     /// `ENCODING_*`: how a normal map stores its vector.
     pub encoding: u32,
+    /// Swap the pixels of the texture already registered under `hash` in place (a screen
+    /// drawn every frame) [documented: remix_c.h, REMIXAPI_TEXTURE_HOST_IMPORT_FLAG_REPLACE].
+    pub replace: bool,
 }
 
 /// What a material is made of.
@@ -157,8 +160,8 @@ impl Remix {
     /// Upload a texture; materials name it by [`texture_ref`] of its hash.
     pub fn create_texture(&self, t: &TextureData<'_>) -> Result<TextureHandle, Error> {
         let Some(f) = self.api.CreateTexture else { return Err(Error { call: "CreateTexture", code: -1 }) };
-        let mut host = TextureInfoHostImportEXT { sType: ST_TEXTURE_INFO_HOST_IMPORT_EXT, pNext: std::ptr::null_mut(), encoding: t.encoding, vkFormat: t.vk_format, flags: 0 };
-        let ext = if t.vk_format != 0 || t.encoding != 0 { (&mut host as *mut TextureInfoHostImportEXT).cast() } else { std::ptr::null_mut() };
+        let mut host = TextureInfoHostImportEXT { sType: ST_TEXTURE_INFO_HOST_IMPORT_EXT, pNext: std::ptr::null_mut(), encoding: t.encoding, vkFormat: t.vk_format, flags: u32::from(t.replace) };
+        let ext = if t.vk_format != 0 || t.encoding != 0 || t.replace { (&mut host as *mut TextureInfoHostImportEXT).cast() } else { std::ptr::null_mut() };
         let info = TextureInfo {
             sType: ST_TEXTURE_INFO,
             pNext: ext,
