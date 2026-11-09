@@ -98,6 +98,8 @@ struct RemixState {
     why: [u32; 4],
     shot_raised: bool,
     shot_taken: bool,
+    /// Interior fill light's strength (NVF_REMIX_FILL_SCALE).
+    fill_scale: f32,
     /// The UI overlay's last picture and its size.
     ui_last: Option<(Vec<u8>, (u32, u32))>,
     /// Shapes left out (test aid: NVF_REMIX_TRACE_HIDE).
@@ -289,6 +291,16 @@ struct Shapes<'w, 's> {
     water_m: Res<'w, Assets<crate::water::WaterMaterial>>,
 }
 
+/// The lights Remix gets: Bevy's point and directional lights, and what the interior fill
+/// light is made from.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Lights<'w, 's> {
+    points: Query<'w, 's, (Entity, &'static PointLight, &'static GlobalTransform, &'static InheritedVisibility)>,
+    suns: Query<'w, 's, (Entity, &'static DirectionalLight, &'static GlobalTransform)>,
+    sky: Option<Res<'w, crate::sky::SkyState>>,
+    ambient: Res<'w, GlobalAmbientLight>,
+}
+
 /// One shape, whatever its material type.
 struct ShapeIn<'a> {
     entity: Entity,
@@ -344,8 +356,7 @@ fn frame(
     live: Res<LiveTextures>,
     bindposes: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     meshes_all: Res<Assets<Mesh>>,
-    points: Query<(Entity, &PointLight, &GlobalTransform, &InheritedVisibility)>,
-    suns: Query<(Entity, &DirectionalLight, &GlobalTransform)>,
+    lights: Lights,
     names: Option<Res<nvf_assets::texture::TextureCache>>,
 ) {
     let Some(mut cell) = world_state else { return };
@@ -653,7 +664,7 @@ fn frame(
 
     // Lights.
     let mut seen = HashSet::new();
-    for (e, l, gt, vis) in &points {
+    for (e, l, gt, vis) in &lights.points {
         if !vis.get() || l.intensity <= 0.0 {
             continue;
         }
@@ -670,7 +681,7 @@ fn frame(
         light(st, e, key, |r| r.create_sphere_light(key, p, radius, rad));
         seen.insert(e);
     }
-    for (e, l, gt) in &suns {
+    for (e, l, gt) in &lights.suns {
         let d: Vec3 = gt.forward().into();
         let c = l.color.to_linear();
         // The game's sun (π × share at full day) in Remix's radiance [hypothesis: tuned
@@ -683,6 +694,28 @@ fn frame(
         let key = hash_of(&(d.to_array().map(f32::to_bits), rad.map(f32::to_bits)));
         light(st, e, key, |r| r.create_distant_light(key, d.to_array(), 0.53, rad));
         seen.insert(e);
+    }
+    // Interiors: a fill light at the eye in the cell's ambient colour. Bevy lights an
+    // interior largely by its ambient term and the cell's directional light, which a
+    // path tracer has no counterpart for inside closed walls [design: the easy stand-in;
+    // NVF_REMIX_FILL_SCALE, observed 2026-11-09: rooms near black without it].
+    if let (Some(sky), Some(eye)) = (lights.sky.as_deref(), eye) {
+        if sky.interior.is_some() {
+            let c = lights.ambient.color.to_linear();
+            let r = 16.0f32;
+            let k = lights.ambient.brightness / crate::sky::light_unit() * st.fill_scale / (r * r);
+            let rad = [c.red * k, c.green * k, c.blue * k];
+            let p = (eye + Vec3::Y * 24.0).to_array();
+            if st.frames % 600 == 1 {
+                info!("remix: interior fill light {rad:?} (ambient {:?} x {})", lights.ambient.color, lights.ambient.brightness);
+            }
+            // Keyed by place and colour, as the point lights: made again when the eye moves
+            // (re-made under one hash and destroyed, it never showed) [observed].
+            let key = hash_of(&("fill", p.map(f32::to_bits), rad.map(f32::to_bits)));
+            let e = Entity::PLACEHOLDER;
+            light(st, e, key, |r_| r_.create_sphere_light(key, p, r, rad));
+            seen.insert(e);
+        }
     }
     let gone: Vec<Entity> = st.lights.keys().filter(|e| !seen.contains(e)).copied().collect();
     for e in gone {
@@ -893,6 +926,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         why: [0; 4],
         shot_raised: false,
         shot_taken: false,
+        fill_scale: scale("NVF_REMIX_FILL_SCALE", 20000.0),
         ui_last: None,
         hidden: HashSet::new(),
         build_time: Default::default(),

@@ -34,6 +34,11 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   each instance (`useDrawCallAlphaState`, `InstanceInfoBlendEXT`): the texture's alpha
   times the vertex colour's, as Bevy draws them. NIF decals go as static decals; LOD
   terrain (depth bias -50 in Bevy, behind the loaded land) is sunk 200 units instead.
+- **Interiors.** Bevy lights a room largely by the cell's ambient term and directional
+  light, which do not reach inside closed walls under path tracing; a fill light (a
+  sphere of 16 units, 24 above the eye) in the ambient colour stands in
+  (`NVF_REMIX_FILL_SCALE`, default 20000) [design: tuned by eye in the Prospector
+  Saloon].
 - **Terrain.** A land quadrant's base mesh and its blended layer meshes (same vertex
   grid, the layer's opacity in the vertex alpha) go as one mesh with Remix Plus's
   terrain-layers material: the base and the top seven layers, weighted per vertex as the
