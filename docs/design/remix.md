@@ -76,6 +76,33 @@ The runtime works in `Documents\My Games\NVForever\remix`: copies of the install
 Remix's caches, `logs` and `captures`. The install's replacement assets are read where
 they are (`DEFAULT_MODS_DIR`). NVForever writes nothing into the install or the game.
 
+## Parity with New Vegas RTX
+
+New Vegas RTX (the install whose runtime this loads) feeds the game to the same Remix API
+through its wrapper and NVSE plugin (MIT-licensed, read for this). NVForever follows it
+[documented: the wrapper's comp.cpp, game.cpp, api_material.cpp, api_rtxconf.cpp,
+weather.cpp; the plugin's lights.cpp; the runtime's rtx_light_utils.cpp]:
+
+- Settings: the install's rtx.conf, and the player's user.conf (the install's, else
+  NVForever.ini `[Render] RemixUserConf`, or NVF_REMIX_USER_CONF); copied when newer.
+- rtx.conf texture lists by D3D9 image hash (XXH3-64 of a block-compressed texture's top
+  level): instance categories and `ignoreAlphaOnTextures`; glow at
+  `rtx.fnvProtocol.glowEmissiveIntensity`.
+- Normal maps as a one-layer layered material (RGB tangent space, alpha as gloss).
+- Lights: point lights only, each as the D3D9 light the wrapper sends (diffuse colour x
+  fade, attenuation (0, 0, a2), range its radius) through the runtime's legacy conversion;
+  no directional light (`NVF_REMIX_LIGHT_A2`, default 0.001 [hypothesis: the wrapper's
+  note of the placed lights' values]).
+- Sky: the atmosphere's sun and moon from the game's clock (moon opposite, the climate's
+  phase), the camera as the clouds' anchor, and the weather as `<FormID>, fnv.<class>`
+  with the outgoing weather and blend; the install's weather presets copied with their
+  class bindings from remix-comp.ini [Weather].
+
+Compared at three Goodsprings cameras against the original with New Vegas RTX
+(tools/capture/capture_frames.py, 2026-11-09): sky, sun and shadows, night, road and rock
+shading match closely. Still different: NVForever's picture is a little brighter, windows
+glow by day and the water tower's texture is brighter, no smoke plume, denser grass.
+
 ## Cost
 
 [observed: 2026-11-09, Goodsprings at 1280x800 window, HND load order, Remix Medium

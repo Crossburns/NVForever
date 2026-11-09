@@ -43,7 +43,7 @@ impl Plugin for RemixPlugin {
             .add_systems(Startup, setup_ui_overlay)
             .add_systems(PostUpdate, resize_ui_overlay)
             .init_resource::<LiveTextures>()
-            .add_systems(PostUpdate, ((take_new_meshes, take_new_images), watch_live_textures).chain().after(AssetEventSystems))
+            .add_systems(PostUpdate, ((take_new_meshes, take_new_images, take_changed_materials), watch_live_textures).chain().after(AssetEventSystems))
             .add_systems(Last, (frame, shut_down_on_exit).chain());
     }
 }
@@ -60,6 +60,8 @@ struct CpuMeshes {
     new_live: Vec<AssetId<Image>>,
     /// Meshes changed after Remix had them (particles, lips, dismembered bodies).
     changed: Vec<AssetId<Mesh>>,
+    /// NIF materials changed (glows by the hour, fades, swapped textures).
+    changed_materials: Vec<UntypedAssetId>,
 }
 
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
@@ -76,6 +78,92 @@ struct PendingImage {
     format: TextureFormat,
     data: Vec<u8>,
     normal: bool,
+    /// The image hash the original's D3D9 draw of this texture has (XXH3-64 of its top
+    /// level as stored), for block-compressed textures [documented: New Vegas RTX's
+    /// api_rtxconf.cpp d3d9_image_hash, the top level packed without pitch padding].
+    d3d9: Option<u64>,
+}
+
+/// XXH3-64 of a block-compressed texture's top level (the bytes at the start of a DDS's
+/// data), as the runtime hashes the D3D9 texture the original uploads.
+fn d3d9_hash(f: TextureFormat, w: u32, h: u32, data: &[u8]) -> Option<u64> {
+    let block = match f {
+        TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => 8usize,
+        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb | TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => 16,
+        _ => return None,
+    };
+    let n = (w.div_ceil(4).max(1) as usize) * (h.div_ceil(4).max(1) as usize) * block;
+    (data.len() >= n).then(|| twox_hash::XxHash3_64::oneshot(&data[..n]))
+}
+
+/// What New Vegas RTX's rtx.conf texture lists say, by D3D9 image hash: the instance
+/// categories a draw of the texture carries, whether its alpha is dropped
+/// (`rtx.ignoreAlphaOnTextures`), and its glow scale [documented: the wrapper's
+/// api_rtxconf.cpp kLists; the runtime's list options].
+#[derive(Default)]
+struct RtxLists {
+    by_hash: HashMap<u64, (u32, bool)>,
+    glow_intensity: f32,
+}
+
+impl RtxLists {
+    fn read(text: &str) -> RtxLists {
+        // The lists that tag an API draw, and the category each becomes; the runtime's
+        // D3D9-only lists (uiTextures, lightConverter, …) are left out.
+        const LISTS: [(&str, u32, bool); 23] = [
+            ("rtx.ignoreTextures", 1 << 3, false),
+            ("rtx.hideInstanceTextures", 1 << 8, false),
+            ("rtx.skyBoxTextures", 1 << 2, false),
+            ("rtx.particleTextures", 1 << 9, false),
+            ("rtx.particleEmitterTextures", 1 << 23, false),
+            ("rtx.beamTextures", 1 << 10, false),
+            ("rtx.decalTextures", 1 << 11, false),
+            ("rtx.dynamicDecalTextures", 1 << 12, false),
+            ("rtx.singleOffsetDecalTextures", 1 << 13, false),
+            ("rtx.nonOffsetDecalTextures", 1 << 14, false),
+            ("rtx.terrainTextures", 1 << 16, false),
+            ("rtx.animatedWaterTextures", 1 << 17, false),
+            ("rtx.worldSpaceUiTextures", 1 << 0, false),
+            ("rtx.worldSpaceUiBackgroundTextures", 1 << 1, false),
+            ("rtx.playerModelTextures", 1 << 18, false),
+            ("rtx.playerModelBodyTextures", 1 << 19, false),
+            ("rtx.hairCardTextures", 1 << 25, false),
+            ("rtx.smoothNormalsTextures", 1 << 24, false),
+            ("rtx.ignoreLights", 1 << 4, false),
+            ("rtx.antiCulling.antiCullingTextures", 1 << 5, false),
+            ("rtx.postfx.motionBlurMaskOutTextures", 1 << 6, false),
+            ("rtx.opacityMicromapIgnoreTextures", 1 << 7, false),
+            ("rtx.ignoreAlphaOnTextures", 1 << 21, true),
+        ];
+        let mut out = RtxLists { glow_intensity: 1.0, ..Default::default() };
+        for line in text.lines() {
+            let Some((k, v)) = line.split_once('=') else { continue };
+            let k = k.trim();
+            if k == "rtx.fnvProtocol.glowEmissiveIntensity" {
+                out.glow_intensity = v.trim().parse().unwrap_or(1.0);
+                continue;
+            }
+            let Some(&(_, cat, drop)) = LISTS.iter().find(|l| l.0 == k) else { continue };
+            for item in v.split(',') {
+                let item = item.trim();
+                // A negative entry ("-0x…") takes the hash out of this list.
+                let (neg, hex) = match item.strip_prefix('-') {
+                    Some(r) => (true, r),
+                    None => (false, item),
+                };
+                let Some(hex) = hex.strip_prefix("0x").or_else(|| hex.strip_prefix("0X")) else { continue };
+                let Ok(h) = u64::from_str_radix(hex, 16) else { continue };
+                let e = out.by_hash.entry(h).or_default();
+                if neg {
+                    e.0 &= !cat;
+                } else {
+                    e.0 |= cat;
+                    e.1 |= drop;
+                }
+            }
+        }
+        out
+    }
 }
 
 /// The runtime and what NVForever made in it (main thread only).
@@ -98,12 +186,21 @@ struct RemixState {
     sun_scale: f32,
     started: std::time::Instant,
     why: [u32; 4],
-    shot_raised: bool,
     shot_taken: bool,
-    /// The sun's elevation and bearing last given to Remix's sky (degrees).
-    sky_sun: Option<(f32, f32)>,
+    /// The quadratic attenuation an engine light carries (NVF_REMIX_LIGHT_A2).
+    light_a2: f32,
+    /// The D3D9 image hash of each uploaded texture that has one (by NVForever's hash).
+    d3d9: HashMap<u64, u64>,
+    /// New Vegas RTX's rtx.conf lists.
+    lists: RtxLists,
+    /// The 1x1 weight textures of a one-layer material (layer 0 at full weight, none).
+    one_layer: Option<(u64, u64)>,
+    /// The sky and weather options last sent, by name.
+    pushed: HashMap<&'static str, String>,
     /// How many times each changed mesh was made again (in its Remix hash).
     mesh_gen: HashMap<AssetId<Mesh>, u32>,
+    /// How many times each changed material was made again.
+    mat_gen: HashMap<UntypedAssetId, u32>,
     /// Changed meshes made again since the last stats line.
     remade: u64,
     /// Interior fill light's strength (NVF_REMIX_FILL_SCALE).
@@ -182,6 +279,16 @@ fn convert_mesh(m: &Mesh) -> Option<CpuMesh> {
         _ => None,
     };
     Some(CpuMesh { verts, idx, skin })
+}
+
+/// NIF materials NVForever changed: their Remix materials are made again (window glows
+/// follow the hour) [observed 2026-11-09: lit windows at 10:00 under Remix].
+fn take_changed_materials(mut ev: MessageReader<AssetEvent<NifMaterial>>, mut cpu: ResMut<CpuMeshes>) {
+    for e in ev.read() {
+        if let AssetEvent::Modified { id } = e {
+            cpu.changed_materials.push(id.untyped());
+        }
+    }
 }
 
 fn take_new_meshes(mut ev: MessageReader<AssetEvent<Mesh>>, meshes: Res<Assets<Mesh>>, mut cpu: ResMut<CpuMeshes>) {
@@ -266,7 +373,8 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<
                 let n = n.to_ascii_lowercase();
                 n.ends_with("_n.dds") || n.ends_with("_n.png")
             });
-        cpu.pending_images.push((*id, Arc::new(PendingImage { width: d.size.width, height: d.size.height, mips: d.mip_level_count, format: d.format, data, normal })));
+        let d3d9 = d3d9_hash(d.format, d.size.width, d.size.height, &data);
+        cpu.pending_images.push((*id, Arc::new(PendingImage { width: d.size.width, height: d.size.height, mips: d.mip_level_count, format: d.format, data, normal, d3d9 })));
     }
 }
 
@@ -412,6 +520,25 @@ fn frame(
             }
         }
     }
+    // Changed materials: dropped with the meshes made with them, made again under a new
+    // generation's hash (as changed meshes).
+    let changed_mats: HashSet<UntypedAssetId> = std::mem::take(&mut cpu.changed_materials).into_iter().filter(|m| st.materials.contains_key(m)).collect();
+    if !changed_mats.is_empty() {
+        for m in &changed_mats {
+            *st.mat_gen.entry(*m).or_default() += 1;
+            if let Some(h) = st.materials.remove(m) {
+                st.remix.destroy_material(h);
+            }
+            st.material_wait.remove(m);
+        }
+        let stale: Vec<_> = st.meshes.keys().filter(|k| changed_mats.contains(&k.1)).copied().collect();
+        for k in stale {
+            if let Some(h) = st.meshes.remove(&k) {
+                st.remix.destroy_mesh(h);
+            }
+        }
+        st.remade += changed_mats.len() as u64;
+    }
     for id in std::mem::take(&mut cpu.skipped_images) {
         st.failed_textures.insert(hash_of(&id));
     }
@@ -425,7 +552,14 @@ fn frame(
             st.failed_textures.insert(hash);
             continue;
         };
-        let t = nvf_remix::TextureData { hash, width: img.width, height: img.height, mips: img.mips, format, data: &img.data, vk_format: vk, encoding: if img.normal { ffi::ENCODING_NORMAL_TANGENT_XY } else { ffi::ENCODING_NONE }, replace: false };
+        // Normal maps as stored, alpha (FNV's gloss) included: materials read them as RGB
+        // tangent-space layers, as New Vegas RTX makes them [documented: the wrapper's
+        // api_material.cpp, normalsRgbTangentSpace and the per-layer gloss].
+        let _ = img.normal;
+        let t = nvf_remix::TextureData { hash, width: img.width, height: img.height, mips: img.mips, format, data: &img.data, vk_format: vk, encoding: ffi::ENCODING_NONE, replace: false };
+        if let Some(h) = img.d3d9 {
+            st.d3d9.insert(hash, h);
+        }
         match st.remix.create_texture(&t) {
             Ok(_) => {
                 st.textures.insert(hash);
@@ -597,7 +731,7 @@ fn frame(
                     moved = data.verts.iter().map(|v| HardcodedVertex { texcoord: t.transform_point2(Vec2::from(v.texcoord)).to_array(), ..*v }).collect();
                     &moved
                 };
-                match st.remix.create_mesh_skinned(hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0))), verts, &data.idx, rm, skin) {
+                match st.remix.create_mesh_skinned(hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0), st.mat_gen.get(&mat).copied().unwrap_or(0))), verts, &data.idx, rm, skin) {
                     Ok(h) => {
                         st.meshes.insert(key, h);
                         h
@@ -612,6 +746,9 @@ fn frame(
         if st.hidden.contains(&key) {
             continue;
         }
+        // The categories New Vegas RTX's rtx.conf lists give the albedo [documented: the
+        // wrapper's api_material.cpp, m.categories from rtxconf::lookup].
+        let category = category | listing(st, &base.base_color_texture).0;
         let two_sided = base.double_sided || base.cull_mode.is_none();
         // A skinned mesh: posed by its joints (joint × inverse bind pose, world space, as
         // Bevy skins it) taken into the instance's space, the instance where its entity is
@@ -702,19 +839,24 @@ fn frame(
             continue;
         }
         let p = gt.translation().to_array();
-        let c = l.color.to_linear();
         let radius = 4.0f32;
-        // Radiance of a sphere of `radius` giving the light's lumens [hypothesis: Bevy's
-        // lumens over 4π sr and the disc's π r², times a scale for Remix's exposure].
-        // In the game's own scale: Bevy's lumens over the camera exposure NVForever lights
-        // with (`sky::light_unit`).
-        let k = l.intensity / crate::sky::light_unit() / (4.0 * std::f32::consts::PI * std::f32::consts::PI * radius * radius) * st.light_scale;
-        let rad = [c.red * k, c.green * k, c.blue * k];
+        // As New Vegas RTX sends an engine light: a D3D9 point light of diffuse colour ×
+        // dimmer (display values: the light's colour, its fade, NVForever's lumens over
+        // 4π² light units, crate::lights::lumens), attenuation (0, 0, a2) and range its
+        // radius, which the runtime converts to a sphere light [documented: the wrapper's
+        // game.cpp update_lights; the runtime's rtx_light_utils.cpp calculateRadiance].
+        let fade = l.intensity / (4.0 * std::f32::consts::PI * std::f32::consts::PI * crate::sky::light_unit());
+        let shown = l.color.to_srgba();
+        let diffuse = [shown.red * fade, shown.green * fade, shown.blue * fade];
+        let rad = legacy_radiance(diffuse, [0.0, 0.0, st.light_a2], l.range, radius).map(|v| v * st.light_scale);
         let key = hash_of(&(p.map(f32::to_bits), rad.map(f32::to_bits)));
         light(st, e, key, |r| r.create_sphere_light(key, p, radius, rad));
         seen.insert(e);
     }
-    for (e, l, gt) in &lights.suns {
+    // No directional light goes to Remix: its atmosphere is the sun and the moon, placed by
+    // the game's clock below, as New Vegas RTX sends point lights only [documented: the
+    // plugin's lights.cpp, "only point lights are sent"; the wrapper's comp.cpp sky drive].
+    for (e, l, gt) in lights.suns.iter().filter(|_| false) {
         let d: Vec3 = gt.forward().into();
         let c = l.color.to_linear();
         // The game's sun (π × share at full day) in Remix's radiance [hypothesis: tuned
@@ -756,21 +898,7 @@ fn frame(
     // y north, z up; rotation as a compass bearing [hypothesis: the runtime's sunRotation
     // is one].
     if let Some(sky) = lights.sky.as_deref().filter(|s| s.interior.is_none()) {
-        let [x, y, z] = fnv_world::sky::sun_direction(&sky.climate, sky.hour, crate::sky::SUN_SOUTH);
-        let elevation = z.clamp(-1.0, 1.0).asin().to_degrees();
-        let rotation = x.atan2(y).to_degrees().rem_euclid(360.0);
-        let moved = st.sky_sun.is_none_or(|(e, r)| (e - elevation).abs() > 0.05 || (r - rotation).abs() > 0.05);
-        if moved {
-            for (k, v) in [("rtx.atmosphere.sunElevation", elevation), ("rtx.atmosphere.sunRotation", rotation)] {
-                if st.remix.set_config(k, &format!("{v:.3}")).is_err() {
-                    st.errors += 1;
-                }
-            }
-            if st.sky_sun.is_none() || st.frames % 600 == 1 {
-                info!("remix: sky sun at elevation {elevation:.1}, bearing {rotation:.1} (game hour {:.2})", sky.hour);
-            }
-            st.sky_sun = Some((elevation, rotation));
-        }
+        sky_drive(st, sky, eye);
     }
     let gone: Vec<Entity> = st.lights.keys().filter(|e| !seen.contains(e)).copied().collect();
     for e in gone {
@@ -806,13 +934,10 @@ fn frame(
     st.present_time += t1.elapsed();
     st.frames += 1;
     // Test aid: NVF_REMIX_SHOT=<seconds>:<file.bmp> saves what the Remix window shows,
-    // that long after the runtime started (the window is brought to the front first).
+    // that long after the runtime started: the window's own picture, so it need not be in
+    // front (nothing over it is taken, and the player's focus is left alone).
     if let Some((secs, path)) = std::env::var("NVF_REMIX_SHOT").ok().and_then(|v| v.split_once(':').map(|(a, b)| (a.parse::<f32>().ok(), b.to_string()))).and_then(|(a, b)| a.map(|a| (a, b))) {
         let t = st.started.elapsed().as_secs_f32();
-        if !st.shot_raised && t >= secs - 1.0 {
-            st.child.raise();
-            st.shot_raised = true;
-        }
         if !st.shot_taken && t >= secs {
             st.shot_taken = true;
             match std::fs::write(&path, st.child.capture_bmp()) {
@@ -874,8 +999,13 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         AlphaMode::Multiply => (None, Some(ffi::BLEND_MULTIPLICATIVE)),
         _ => (None, None),
     };
+    // What New Vegas RTX's lists say of the albedo: `rtx.ignoreAlphaOnTextures` drops the
+    // alpha test and blend [documented: the wrapper's api_material.cpp, alpha_dropped].
+    let listed = listing(st, &b.base_color_texture);
+    let (alpha_test, blend) = if listed.1 { (None, None) } else { (alpha_test, blend) };
+    let glow = st.lists.glow_intensity;
     let desc = nvf_remix::MaterialDesc {
-        hash: hash_of(&id),
+        hash: hash_of(&(id, st.mat_gen.get(&id).copied().unwrap_or(0))),
         albedo: tex(&b.base_color_texture),
         // LOD terrain's normal maps are in model space (lod.rs), not the tangent space
         // Remix reads: left out.
@@ -883,7 +1013,9 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         // An unlit surface (a screen) glows with its own picture [design: Remix lights
         // every surface; emission is how a picture shows unlit].
         emissive: if b.unlit { tex(&b.base_color_texture) } else { tex(&b.emissive_texture) },
-        emissive_intensity: if b.unlit || e.red + e.green + e.blue > 0.0 { 1.0 } else { 0.0 },
+        // A glow map at New Vegas RTX's glow intensity (rtx.fnvProtocol.glowEmissiveIntensity)
+        // [documented: the wrapper's api_material.cpp, glow_intensity].
+        emissive_intensity: if b.unlit { 1.0 } else if e.red + e.green + e.blue > 0.0 { if b.emissive_texture.is_some() { glow } else { 1.0 } } else { 0.0 },
         emissive_color: if b.unlit { [c.red, c.green, c.blue] } else { [e.red, e.green, e.blue] },
         albedo_constant: [c.red, c.green, c.blue],
         opacity: c.alpha,
@@ -893,11 +1025,22 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         // colour's, as Bevy draws them (the sand drifting over roads fades out by its
         // vertex alpha) [documented: remix_c.h useDrawCallAlphaState]; the state comes
         // with each instance (`instance_alpha`).
-        draw_call_alpha: instance_alpha(b.alpha_mode).is_some(),
+        draw_call_alpha: !listed.1 && instance_alpha(b.alpha_mode).is_some(),
         alpha_test,
         blend,
     };
-    match st.remix.create_material(&desc) {
+    // A normal map goes as a one-layer material (layer 0 at full weight everywhere): the
+    // layer reads it as RGB tangent space with its alpha as gloss, where a plain normal
+    // texture would drop the alpha [documented: the wrapper's api_material.cpp, "Layers at
+    // weight 1", weightUvScale 0 and offset 0.5].
+    let made = match (desc.albedo, desc.normal) {
+        (Some(albedo), Some(normal)) => match one_layer(st) {
+            Some(weights) => st.remix.create_terrain_material(&nvf_remix::MaterialDesc { normal: None, ..desc.clone() }, &[(albedo, Some(normal))], [weights.0, weights.1], [0.0, 0.0], [0.5, 0.5]),
+            None => st.remix.create_material(&desc),
+        },
+        _ => st.remix.create_material(&desc),
+    };
+    match made {
         Ok(h) => {
             st.materials.insert(id, h);
             Some(h)
@@ -907,6 +1050,196 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
             None
         }
     }
+}
+
+/// The weight textures of a one-layer material: layer 0 at 1, the second set at 0.
+fn one_layer(st: &mut RemixState) -> Option<(u64, u64)> {
+    if let Some(w) = st.one_layer {
+        return Some(w);
+    }
+    let (a, b) = (hash_of(&"nvforever one layer"), hash_of(&"nvforever no layer"));
+    for (h, px) in [(a, [255u8, 0, 0, 0]), (b, [0u8, 0, 0, 0])] {
+        let t = nvf_remix::TextureData { hash: h, width: 1, height: 1, mips: 1, format: ffi::FORMAT_R8G8B8A8_UNORM, data: &px, vk_format: 0, encoding: 0, replace: false };
+        if st.remix.create_texture(&t).is_err() {
+            st.errors += 1;
+            return None;
+        }
+    }
+    st.one_layer = Some((a, b));
+    st.one_layer
+}
+
+/// Remix's sky from the game's, as New Vegas RTX drives it each frame: the sun and the moon
+/// (opposite it, in the climate's phase), the camera as the clouds' anchor, and the weather
+/// as its class for the weather presets [documented: the wrapper's comp.cpp sky_drive and
+/// weather.cpp; option names from the runtime]. Values are sent when they change.
+fn sky_drive(st: &mut RemixState, sky: &crate::sky::SkyState, eye: Option<Vec3>) {
+    let [x, y, z] = fnv_world::sky::sun_direction(&sky.climate, sky.hour, crate::sky::SUN_SOUTH);
+    let elevation = z.clamp(-1.0, 1.0).asin().to_degrees();
+    let rotation = x.atan2(y).to_degrees().rem_euclid(360.0);
+    let moon_rotation = (-x).atan2(-y).to_degrees().rem_euclid(360.0);
+    // The game's phase index runs 0 full .. 4 new; the sky's phase 0 new, 0.5 full.
+    let phase = ((sky.moon_phase() + 4) & 7) as f32 / 8.0;
+    let mut values: Vec<(&'static str, String)> = vec![
+        ("rtx.atmosphere.sunElevation", format!("{elevation:.2}")),
+        ("rtx.atmosphere.sunRotation", format!("{rotation:.2}")),
+        ("rtx.atmosphere.moon0.enabled", "1".into()),
+        ("rtx.atmosphere.moon0.elevation", format!("{:.2}", -elevation)),
+        ("rtx.atmosphere.moon0.rotation", format!("{moon_rotation:.2}")),
+        ("rtx.atmosphere.moon0.phase", format!("{phase:.3}")),
+        ("rtx.weather.gameWeather", weather_id(&sky.weather)),
+        ("rtx.weather.gameWeatherOutgoing", sky.prev.as_ref().map(weather_id).unwrap_or_default()),
+        ("rtx.weather.gameWeatherBlend", if sky.prev.is_some() { format!("{:.2}", sky.fade.clamp(0.0, 1.0)) } else { "1".into() }),
+    ];
+    if let Some(e) = eye {
+        values.push(("rtx.atmosphere.useCameraWorldOverride", "True".into()));
+        values.push(("rtx.atmosphere.cameraWorldOverride", format!("{:.1}, {:.1}, {:.1}", e.x, e.y, e.z)));
+    }
+    for (k, v) in values {
+        if st.pushed.get(k) == Some(&v) {
+            continue;
+        }
+        if st.remix.set_config(k, &v).is_err() {
+            st.errors += 1;
+        }
+        if k == "rtx.weather.gameWeather" || (k == "rtx.atmosphere.sunElevation" && st.frames % 600 == 1) {
+            info!("remix: {k} = {v} (game hour {:.2})", sky.hour);
+        }
+        st.pushed.insert(k, v);
+    }
+}
+
+/// A weather as New Vegas RTX names it to the weather presets: its FormID and its class
+/// (fnv.clear, fnv.haze, …) from the record's flags, fog, wind and thunder, with the
+/// wrapper's thresholds [documented: its weather.cpp classify and remix-comp.ini
+/// [Weather]: FogFarMax 20000, HazeFogFarMax 60000, DustWindMin 100, StormThunderMax 200].
+fn weather_id(w: &fnv_world::sky::Weather) -> String {
+    let fog = if w.fog[1] > 0.0 { w.fog[1] } else { w.fog[3].max(0.0) };
+    let windy = w.wind_speed >= 100;
+    let cloudy = w.classification & 2 != 0;
+    let class = if w.classification & 4 != 0 {
+        if w.lightning_frequency <= 200 { "storm" } else { "rain" }
+    } else if w.classification & 8 != 0 {
+        "snow"
+    } else if fog > 0.0 && fog <= 20000.0 {
+        if windy { "dust" } else { "fog" }
+    } else if fog > 0.0 && fog <= 60000.0 {
+        if windy {
+            "dust"
+        } else if cloudy {
+            "overcast"
+        } else {
+            "haze"
+        }
+    } else if cloudy {
+        "cloudy"
+    } else {
+        "clear"
+    };
+    format!("{:08X}, fnv.{class}", w.form_id)
+}
+
+/// The install's weather presets in NVForever's folder, each bound to the weather classes
+/// the install's remix-comp.ini gives it ([Weather] Clear=Fair, …), as the wrapper binds
+/// them at start [documented: its weather.cpp bind_presets]. Returns the folder.
+fn bind_weather_presets(root: &std::path::Path, work: &std::path::Path) -> Option<std::path::PathBuf> {
+    let src = root.join("rtx-remix").join("weather");
+    let dst = work.join("weather");
+    std::fs::create_dir_all(&dst).ok()?;
+    let ini = std::fs::read_to_string(root.join("remix-comp.ini")).unwrap_or_default();
+    let mut section = false;
+    let mut binds: HashMap<String, Vec<String>> = HashMap::new();
+    for line in ini.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            section = t.eq_ignore_ascii_case("[Weather]");
+            continue;
+        }
+        if !section || t.starts_with(';') {
+            continue;
+        }
+        let Some((k, v)) = t.split_once('=') else { continue };
+        let class = k.trim().to_ascii_lowercase();
+        if ["clear", "haze", "cloudy", "overcast", "fog", "dust", "rain", "storm", "snow"].contains(&class.as_str()) {
+            binds.entry(v.trim().to_ascii_lowercase()).or_default().push(format!("fnv.{class}"));
+        }
+    }
+    for e in std::fs::read_dir(&src).ok()?.flatten() {
+        let path = e.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("conf") {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|x| x.to_str()).unwrap_or_default().to_ascii_lowercase();
+        let ids = binds.get(&stem).map(|v| v.join(", ")).unwrap_or_default();
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let out: String = text
+            .lines()
+            .map(|l| if l.trim_start().starts_with("weather.bindings") { format!("weather.bindings = {ids}") } else { l.to_string() })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = std::fs::write(dst.join(path.file_name()?), out + "\n");
+    }
+    Some(dst)
+}
+
+/// The runtime's conversion of a D3D9 point light (diffuse colour, attenuation a0 a1 a2,
+/// range) to the radiance of a sphere light of `sphere` radius, with least squares on
+/// (its default) [documented: the runtime's rtx_light_utils.cpp leastSquareIntensity,
+/// calculateIntensity, calculateRadiance; kLegacyLightEndValue 1/255, kNewLightEndValue
+/// 0.01, lightConversionIntensityFactor 1].
+fn legacy_radiance(diffuse: [f32; 3], att: [f32; 3], range: f32, sphere: f32) -> [f32; 3] {
+    const EPS: f32 = 1e-6;
+    const LEGACY_END: f32 = 1.0 / 255.0;
+    const NEW_END: f32 = 0.01;
+    let [a0, a1, a2] = att;
+    let b = diffuse[0].max(diffuse[1]).max(diffuse[2]);
+    if b <= 0.0 {
+        return [0.0; 3];
+    }
+    let least_squares = |range: f32| -> f32 {
+        let mut low = 0.0f32;
+        if a2 < EPS {
+            if a1 > EPS {
+                low = (1.0 / 0.1 - a0) / a1;
+            }
+        } else {
+            let c = a0 - 1.0 / 0.1;
+            let disc = a1 * a1 - 4.0 * a2 * c;
+            if disc >= 0.0 {
+                let r = disc.sqrt();
+                for root in [(-a1 + r) / (2.0 * a2), (-a1 - r) / (2.0 * a2)] {
+                    if root > 0.0 {
+                        low = root;
+                    }
+                }
+            }
+        }
+        let range = if low > 0.0 { range.min(low) } else { range };
+        let (mut num, mut den) = (0.0f32, 0.0f32);
+        for i in 0..5 {
+            let x = (i + 1) as f32 / 5.0 * range;
+            let x2 = x * x;
+            let ii = b / (a2 * x2 + a1 * x + a0);
+            num += ii / x2;
+            den += 1.0 / (x2 * x2);
+        }
+        num / den
+    };
+    let end = if a0 > 0.0 && b / a0 < LEGACY_END {
+        0.0
+    } else if a2 < EPS && a1 <= EPS {
+        range
+    } else {
+        (least_squares(range) / LEGACY_END).sqrt()
+    };
+    let intensity = NEW_END / (std::f32::consts::PI * sphere * sphere) * end * end;
+    diffuse.map(|d| d / b * intensity)
+}
+
+/// What New Vegas RTX's rtx.conf lists say of a texture: instance categories and whether
+/// its alpha is dropped.
+fn listing(st: &RemixState, t: &Option<Handle<Image>>) -> (u32, bool) {
+    t.as_ref().and_then(|h| st.d3d9.get(&hash_of(&h.id()))).and_then(|d| st.lists.by_hash.get(d)).copied().unwrap_or((0, false))
 }
 
 #[derive(Default)]
@@ -942,8 +1275,36 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
             let mut text = std::fs::read_to_string(&conf).unwrap_or_default();
             // No splash banner either ("Welcome to New Vegas RTX … Closing in", across the
             // top for 20 s) [documented: the runtime's dxvk_imgui_splash, hideSplashMessage].
-            text.push_str("\n# NVForever\nrtx.automation.disableBlockingDialogBoxes = True\nrtx.hideSplashMessage = True\n");
+            // No input sink window for the runtime's menu: it registers the process's raw
+            // mouse and keyboard to itself (the keyboard RIDEV_NOLEGACY), and a process has
+            // one registration per device, so NVForever got neither mouse looks nor keys
+            // [documented: the runtime's rtx_overlay_window.cpp and dxvk_imgui.cpp,
+            // useNewGuiInputMethod; observed 2026-11-09, the owner could not move or press].
+            text.push_str("\n# NVForever\nrtx.automation.disableBlockingDialogBoxes = True\nrtx.hideSplashMessage = True\nrtx.useNewGuiInputMethod = False\n");
+            if let Some(dir) = bind_weather_presets(r, work) {
+                text.push_str(&format!("rtx.weather.presetDirectory = {}\n", dir.to_string_lossy().replace('\\', "/")));
+            }
             let _ = std::fs::write(&conf, text);
+            // The player's own settings (user.conf: preset, frame generation, …), read by
+            // the runtime from the folder it runs in [documented: rtx_option_layer.cpp,
+            // the user layer]: the install's, else NVForever.ini's `[Render] RemixUserConf`
+            // or NVF_REMIX_USER_CONF (an MO2 setup keeps it in a mod of its own, `NV RTX
+            // tuning`). Copied when newer than the copy, so what the runtime's menu saved
+            // there stays [design].
+            let user_src = Some(r.join("user.conf")).filter(|p| p.is_file()).or_else(|| {
+                let from_ini = fnv_install::EngineHome::user().and_then(|h| std::fs::read_to_string(h.config_file()).ok()).and_then(|t| fnv_install::ini_get(&t, "Render", "RemixUserConf").map(|v| v.trim().to_string()));
+                from_ini.or_else(|| std::env::var("NVF_REMIX_USER_CONF").ok()).map(std::path::PathBuf::from).filter(|p| p.is_file())
+            });
+            if let Some(src) = user_src {
+                let dst = work.join("user.conf");
+                let newer = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+                if newer(&dst).is_none_or(|d| newer(&src).is_some_and(|s| s > d)) {
+                    match std::fs::copy(&src, &dst) {
+                        Ok(_) => info!("remix: user settings from {}", src.display()),
+                        Err(e) => warn!("remix: {}: {e}", src.display()),
+                    }
+                }
+            }
             let mods = r.join("rtx-remix").join("mods");
             if mods.is_dir() {
                 std::env::set_var("DEFAULT_MODS_DIR", &mods);
@@ -954,6 +1315,14 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         std::env::set_var("DXVK_CONFIG_FILE", work.join("dxvk.conf"));
         let _ = std::env::set_current_dir(work);
     }
+    let lists = home
+        .as_ref()
+        .map(|w| w.join("rtx.conf"))
+        .or_else(|| root.as_ref().map(|r| r.join("rtx.conf")))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| RtxLists::read(&t))
+        .unwrap_or(RtxLists { glow_intensity: 1.0, ..Default::default() });
+    info!("remix: rtx.conf lists name {} textures; glow intensity {}", lists.by_hash.len(), lists.glow_intensity);
     let child = nvf_remix::window::Child::new(parent).ok_or("could not make the Remix child window")?;
     let mut remix = nvf_remix::Remix::load(&config.dll)?;
     remix.startup(child.hwnd.cast()).map_err(|e| e.to_string())?;
@@ -979,14 +1348,18 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         lights: HashMap::new(),
         frames: 0,
         errors: 0,
-        light_scale: scale("NVF_REMIX_LIGHT_SCALE", 400.0),
+        light_scale: scale("NVF_REMIX_LIGHT_SCALE", 1.0),
         sun_scale: scale("NVF_REMIX_SUN_SCALE", 2.0),
         started: std::time::Instant::now(),
         why: [0; 4],
-        shot_raised: false,
         shot_taken: false,
-        sky_sun: None,
+        light_a2: scale("NVF_REMIX_LIGHT_A2", 0.001),
+        d3d9: HashMap::new(),
+        lists,
+        one_layer: None,
+        pushed: HashMap::new(),
         mesh_gen: HashMap::new(),
+        mat_gen: HashMap::new(),
         remade: 0,
         fill_scale: scale("NVF_REMIX_FILL_SCALE", 20000.0),
         ui_last: None,

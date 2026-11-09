@@ -4653,6 +4653,7 @@ dependencies = [
  "serde_json",
  "texpresso",
  "tracy-client",
+ "twox-hash",
  "wgpu",
  "wgpu-ffx",
  "windows-sys 0.61.2",
