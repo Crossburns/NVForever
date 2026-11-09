@@ -100,6 +100,38 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                 XVal::Num(code.unwrap_or(0.0))
             }
         }
+        // `actorValue base`: the base value an actor with that base form has, by the rules
+        // GetBaseActorValue follows (the player's base reads the player's) [observed:
+        // hnd2, player Health 75, Strength 6; DocMitchell 50, 4].
+        "getbaseactorvaluealt" => {
+            let code = match args.first() {
+                Some(XVal::Num(x)) => *x as u16,
+                _ => return Some(Ok(XVal::Num(0.0))),
+            };
+            let Some(base) = form(args, 1) else { return Some(Ok(XVal::Num(0.0))) };
+            let r = if base == FormId::PLAYER_BASE {
+                Some(FormId::PLAYER_REF)
+            } else {
+                g.world.placed.refs.iter().find(|(_, p)| p.base == base).map(|(id, _)| *id)
+            };
+            match r {
+                Some(r) => XVal::Num(g.base_actor_value(r, code).unwrap_or(0.0)),
+                None => XVal::Num(0.0),
+            }
+        }
+        // `firstPerson`: the camera's field of view, as Anh's GetCameraFOV [observed:
+        // hnd2, 0 gave 80 and 1 gave 75 with High and Dry's INI].
+        "getplayercamfov" => return crate::nvse_small::call(g, _ctx, "getcamerafov", subject, args),
+        // The actor's equipped weapon has a scope (WEAP DNAM Has Scope) [observed: hnd2,
+        // the player without one 0; hypothesis: a scope weapon mod counts too, not read].
+        "isequippedweaponscoped" => {
+            let w = crate::nvse::call(g, _ctx, "getequippedobject", subject, &[XVal::Num(5.0)]);
+            let w = match w {
+                Some(Ok(XVal::Ref(w))) if w != 0 => w,
+                _ => return Some(Ok(XVal::Num(0.0))),
+            };
+            return crate::nvse::call(g, _ctx, "getweaponhasscope", None, &[XVal::Ref(w)]);
+        }
         _ => match string_maps(g, name, args) {
             Some(v) => v,
             None => return None,
