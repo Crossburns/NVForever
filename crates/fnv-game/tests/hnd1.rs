@@ -74,3 +74,31 @@ fn quest_lists_are_no_array_when_empty() {
     assert_eq!(q(&mut g, "SetFunctionValue (GetQuests 1)"), XVal::Num(0.0));
     assert_eq!(q(&mut g, "SetFunctionValue (PlayerRef.GetSequenceAnimGroup 3)"), XVal::Num(-1.0));
 }
+
+#[test]
+fn hnd4_reads_answer_as_the_original_did() {
+    let f = fixture();
+    let mut g = game(&f);
+    // [observed: hnd4]
+    let n = |g: &mut Game, s: &str| match q(g, &format!("SetFunctionValue ({s})")) {
+        XVal::Num(x) => x,
+        v => panic!("{s}: {v:?}"),
+    };
+    assert_eq!(n(&mut g, "GetSystemColor 1"), f64::from(0xFFB642));
+    assert_eq!(n(&mut g, "GetSystemColor 4"), f64::from(0x1AFF80));
+    assert_eq!(n(&mut g, "GetSystemColor 6"), 0.0);
+    assert_eq!(n(&mut g, "GetJohnnyPatch 1"), 1.0);
+    assert_eq!(n(&mut g, "GetJohnnyPatch 2"), 0.0);
+    assert_eq!(n(&mut g, "GetJohnnyPatch 8"), 1.0);
+    assert_eq!(n(&mut g, "GetJohnnyPatch 9"), 0.0);
+    assert_eq!(n(&mut g, "player.GetRadiationLevelAlt"), 0.0);
+    q(&mut g, "SetSystemColor 1 1 2 3");
+    assert_eq!(n(&mut g, "GetSystemColor 1"), f64::from(0x010203), "SetSystemColor's colour");
+}
+
+#[test]
+fn set_objective_text_changes_get_objective_text_only_for_objectives_that_exist() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(q(&mut g, "SetObjectiveText Player 10 \"x %g\" 5\nSetFunctionValue (GetObjectiveText Player 10)"), XVal::Str(String::new()));
+}

@@ -35,6 +35,34 @@ fn list_or_zero(g: &mut Game, items: Vec<XVal>) -> XVal {
 
 pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
     let v = match name {
+        // `interface` 1-5: the colour as 0xRRGGBB; SetSystemColor's when set, else the
+        // original's with High and Dry's settings [observed: hnd4, 1 0xFFB642, 2 0xFF432A,
+        // 3 0xFFB642, 4 0x1AFF80, 5 0xFFB642; 0 and 6 read 0].
+        "getsystemcolor" => {
+            let id = num(args, 0, 0.0) as i64;
+            const SEEN: [[u8; 3]; 5] = [[0xFF, 0xB6, 0x42], [0xFF, 0x43, 0x2A], [0xFF, 0xB6, 0x42], [0x1A, 0xFF, 0x80], [0xFF, 0xB6, 0x42]];
+            if !(1..=5).contains(&id) {
+                return Some(Ok(XVal::Num(0.0)));
+            }
+            let c = g.other.jip9.colours.get(&(id as u8)).copied().unwrap_or(SEEN[id as usize - 1]);
+            XVal::Num(f64::from(u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2])))
+        }
+        // `patch`: whether JohnnyGuitar's patch of that number is on [observed: hnd4 with
+        // High and Dry's JohnnyGuitar settings, 1 and 3-8 read 1; 0, 2 and 9-12 read 0].
+        "getjohnnypatch" => {
+            let p = num(args, 0, 0.0) as i64;
+            XVal::Num(f64::from(u8::from(p == 1 || (3..=8).contains(&p))))
+        }
+        // As GetRadiationLevel, on any actor [observed: hnd4, both 0 at the bench save;
+        // only the player takes the place's radiation here, radiation.rs].
+        "getradiationlevelalt" => {
+            let r = subject.unwrap_or(FormId::PLAYER_REF);
+            XVal::Num(if r == FormId::PLAYER_REF { g.radiation().resisted } else { 0.0 })
+        }
+        // [observed: hnd4, GetExtraAccuracyPenaltyMult reads 1 for the player's weapon
+        // and a stimpak, also after SetExtraAccuracyPenaltyMult 2.5; the setter returns 0].
+        "getextraaccuracypenaltymult" => XVal::Num(1.0),
+        "setextraaccuracypenaltymult" => XVal::Num(0.0),
         // `flag`: 0 the quests under way (not completed, an objective shown), any other the
         // completed ones [observed: quests2, GetQuests 0 gave VMQ01 (running) and VCG02 (not
         // running, not completed); 1, 2, 3, 4 and 8 gave VCG01 (completed)].
@@ -177,6 +205,18 @@ pub struct HndState {
     pub cursors: std::collections::HashMap<String, usize>,
     /// yUI's traits set by ySISetTrait: (trait, form) -> value.
     pub ysi_traits: std::collections::HashMap<(String, u32), String>,
+    /// JIP's SetObjectiveText: an objective's display text in place of its record's.
+    pub objective_texts: std::collections::HashMap<(fnv_sim::FormId, i32), String>,
+}
+
+impl crate::game::Game<'_> {
+    /// A quest objective's display text: SetObjectiveText's, else the record's.
+    pub fn objective_text(&self, quest: fnv_sim::FormId, index: i32) -> Option<String> {
+        if let Some(t) = self.gaps.hnd.objective_texts.get(&(quest, index)) {
+            return Some(t.clone());
+        }
+        self.data.quests.get(&quest)?.objectives.get(&index)?.text.clone()
+    }
 }
 
 fn text(args: &[XVal], k: usize) -> String {

@@ -6039,7 +6039,13 @@ impl Host for Exec<'_, '_> {
     }
 
     fn objective_text(&mut self, quest: u32, index: i32) -> Option<String> {
-        self.game.data.quests.get(&FormId(quest))?.objectives.get(&index)?.text.clone()
+        self.game.objective_text(FormId(quest), index)
+    }
+
+    fn set_objective_text(&mut self, quest: u32, index: i32, text: String) {
+        if self.game.data.quests.get(&FormId(quest)).is_some_and(|q| q.objectives.contains_key(&index)) {
+            self.game.gaps.hnd.objective_texts.insert((FormId(quest), index), text);
+        }
     }
 
     fn calling_ref(&mut self) -> Option<u32> {

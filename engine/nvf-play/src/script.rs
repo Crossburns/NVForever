@@ -1381,7 +1381,7 @@ impl EffectCtx for PlayCtx<'_> {
     }
 
     fn objective_text(&self, quest: FormId, index: i32) -> Option<String> {
-        self.data.quests.get(&quest)?.objectives.get(&index)?.text.as_deref().map(|t| self.game.expand_codes(t))
+        self.game.objective_text(quest, index).map(|t| self.game.expand_codes(&t))
     }
 
     fn quest_title(&self, quest: FormId) -> Option<String> {

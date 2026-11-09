@@ -865,8 +865,23 @@ fn task_pools(placed: Option<usize>) -> TaskPoolPlugin {
     TaskPoolPlugin { task_pool_options }
 }
 
+/// `@file` arguments read as the file's lines (a Mod Organizer plugins.txt for
+/// `--plugins @…\plugins.txt`: `#` comments and blank lines left out, a leading `*` taken
+/// off), as fnvtool reads them.
+fn expand_lists(args: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in args {
+        let listed = a.strip_prefix('@').filter(|f| std::path::Path::new(f).is_file()).and_then(|f| std::fs::read_to_string(f).ok());
+        match listed {
+            Some(text) => out.extend(text.lines().map(|l| l.trim().trim_start_matches('*')).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from)),
+            None => out.push(a),
+        }
+    }
+    out
+}
+
 fn main() -> AppExit {
-    let mut line = with_default_mode(std::env::args().collect());
+    let mut line = with_default_mode(expand_lists(std::env::args()));
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf)) {
         line = with_schemas_beside(line, &dir);
         let functions = dir.join("schemas").join("script").join("functions.json");

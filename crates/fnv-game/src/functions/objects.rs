@@ -485,3 +485,43 @@ pub fn get_vats_left_area_free(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Val
 pub fn get_vats_right_area_free(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     area_free(g, ctx, true)
 }
+
+/// `GetIsFormType SIG` (0x11AA, a four-letter record type): 1 when the calling object is
+/// of that type: a reference by its base object [documented: the catalogue's summary,
+/// "the calling object has the given form type, passed as its four-character
+/// signature"; hypothesis: a reference answers for its base, as `rItem.GetIsFormType
+/// WEAP` in Vanilla UI Plus asks of inventory items].
+pub fn get_is_form_type(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    let r = ctx.subject()?;
+    let want = a.peek_str(0).unwrap_or("").trim().to_ascii_uppercase();
+    let of = |f: FormId| g.data.sig(f).map(|s| s.eq_ignore_ascii_case(want.as_bytes())).unwrap_or(false);
+    let hit = of(r) || super::base_of(g, r).is_some_and(|b| b != r && of(b));
+    yes(hit)
+}
+
+/// `ObjectUnderReticle min max` (0x1265): the first reference a cast from the player's
+/// view meets between the two distances, else none [documented: the catalogue's summary,
+/// "casts a ray from the crosshairs between a minimum and maximum range and returns the
+/// first object hit"; hypothesis: the view is the player's eye 64 above the feet along
+/// the player's pitch and heading, the cast's distance counted from there].
+pub fn object_under_reticle(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    let min = a.num(0).unwrap_or(0.0) as f32;
+    let max = a.num(1).unwrap_or(0.0) as f32;
+    let Some((pos, rot)) = g.ref_pos_rot(FormId::PLAYER_REF) else { return Ok(Value::NONE) };
+    if max <= min.max(0.0) {
+        return Ok(Value::NONE);
+    }
+    let (x, z) = (rot[0], rot[2]);
+    let dir = [z.sin() * x.cos(), z.cos() * x.cos(), -x.sin()];
+    let o = [pos[0], pos[1], pos[2] + 64.0];
+    let to = [o[0] + dir[0] * max, o[1] + dir[1] * max, o[2] + dir[2] * max];
+    let hit = crate::ray::cast_hit(o, to, crate::ray::CastKind::World).filter(|h| h.distance >= min);
+    Ok(hit.and_then(|h| h.form).map_or(Value::NONE, Value::Ref))
+}
+
+/// `IsGreetingPlayer` (0x107B, an idle and dialogue condition): 0 [hypothesis: NVForever
+/// keeps no greeting state apart from the dialogue itself; an actor's greeting starts the
+/// conversation at once here].
+pub fn is_greeting_player(_g: &mut Game, _ctx: &Ctx, _a: &Args) -> Result<Value, String> {
+    yes(false)
+}

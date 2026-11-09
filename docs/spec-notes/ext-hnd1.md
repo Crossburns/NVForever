@@ -16,3 +16,18 @@ Goodsprings [observed]. Built in `crates/fnv-game/src/nvse_hnd1.rs`.
 
 JIP's list functions give 0, not an empty array, when there is nothing to list
 [observed: GetObjectiveTargets, GetQuestObjectives flags 1-4].
+
+## hnd4 (2026-11-09)
+
+Probe set hnd4 in the original (xNVSE 6.4.9, High and Dry's plugins and settings, the
+bench save) [observed]:
+
+- `GetSystemColor n`: 1 0xFFB642, 2 0xFF432A, 3 0xFFB642, 4 0x1AFF80, 5 0xFFB642 as
+  0xRRGGBB; 0 and 6 read 0. NVForever gives SetSystemColor's colour when one was set.
+- `GetJohnnyPatch n`: 1 and 3-8 read 1; 0, 2 and 9-12 read 0 (JohnnyGuitar's settings
+  as High and Dry ships them).
+- `GetRadiationLevelAlt` read as GetRadiationLevel (0 and 0 at the save).
+- `GetExtraAccuracyPenaltyMult` read 1 for the equipped weapon and for a stimpak, and
+  still 1 after `SetExtraAccuracyPenaltyMult 2.5` on the weapon; the setter returned 0.
+- JIP's `SetObjectiveText quest index "text" [vars]` replaces the objective's display
+  text for GetObjectiveText, the Pip-Boy and the HUD; for the session [hypothesis].

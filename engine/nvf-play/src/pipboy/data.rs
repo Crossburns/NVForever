@@ -1138,7 +1138,8 @@ fn objectives(game: &Game, q: u32) -> Vec<Row> {
         .iter()
         .filter(|(_, o)| o.displayed || o.completed)
         .filter_map(|(i, o)| {
-            let text = rt.game.expand_codes(def.objectives.get(i)?.text.as_deref()?);
+            def.objectives.get(i)?;
+            let text = rt.game.expand_codes(&rt.game.objective_text(FormId(q), *i)?);
             (!text.trim().is_empty()).then(|| ObjectiveLine { index: *i, text: text.trim().to_string(), done: o.completed })
         })
         .collect();

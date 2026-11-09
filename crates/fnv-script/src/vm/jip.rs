@@ -114,7 +114,14 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 /// version the original reports there (one mod asks only whether it is installed).
 /// High and Dry's own install reports Stewie 1000, yUI 140, Improved Console 3
 /// [observed: hnd3].
-pub const PLUGINS: [(&str, f64); 12] = [
+///
+/// And the plugins High and Dry's MCM menus list as requirements (MCM Extender's checker
+/// reads `"type": "dll"` entries from each mod's MCM json), at the versions the original
+/// reports there [observed: plugins1, 2026-11-09]: "Engine Optimizations" 100 and
+/// "HighResLocalMaps" 12 (engine patches without script functions), "Overcharge" 120,
+/// "AnhNVSE" 131, "SUP NVSE Plugin" 855 [design, same rule: their script functions are
+/// NVForever's own, their engine changes not needed or not built].
+pub const PLUGINS: [(&str, f64); 17] = [
     ("JIP NVSE Plugin", JIP_VERSION),
     ("JIP LN NVSE", JIP_VERSION),
     ("ShowOffNVSE Plugin", 184.0),
@@ -127,6 +134,11 @@ pub const PLUGINS: [(&str, f64); 12] = [
     ("itr-nvse", 108.0),
     ("yUI", 140.0),
     ("Improved Console", 3.0),
+    ("Engine Optimizations", 100.0),
+    ("HighResLocalMaps", 12.0),
+    ("Overcharge", 120.0),
+    ("AnhNVSE", 131.0),
+    ("SUP NVSE Plugin", 855.0),
 ];
 
 impl Vm<'_, '_> {
@@ -488,6 +500,16 @@ impl Vm<'_, '_> {
                 let f = val(self, 0)?.value()?.as_form().unwrap_or(0);
                 let part = val(self, 1)?.num()? as i64;
                 Ok(Some(XVal::Str(self.host.body_part_name(f, part).unwrap_or_default())))
+            }
+            // `quest index "text" [vars]`: the objective's display text, formatted
+            // [documented: SetObjectiveText]; for the session [hypothesis: the page says
+            // nothing of saves].
+            "setobjectivetext" => {
+                let q = val(self, 0)?.value()?.as_form().unwrap_or(0);
+                let i = val(self, 1)?.num()? as i32;
+                let (t, _) = self.format_arg(c, 2)?;
+                self.host.set_objective_text(q, i, t);
+                Ok(Some(XVal::Num(0.0)))
             }
             // [documented: GetObjectiveText; observed: objective 9999 gives ""].
             "getobjectivetext" => {

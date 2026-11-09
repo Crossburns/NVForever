@@ -283,6 +283,8 @@ pub trait Host {
     fn objective_text(&mut self, _quest: u32, _index: i32) -> Option<String> {
         None
     }
+    /// JIP's SetObjectiveText: the objective's display text from now on.
+    fn set_objective_text(&mut self, _quest: u32, _index: i32, _text: String) {}
     /// The reference the script runs on, if any (JIP's stores default to it).
     fn calling_ref(&mut self) -> Option<u32> {
         None
@@ -1798,7 +1800,7 @@ impl Vm<'_, '_> {
                 }
                 Ok(Flow::Normal)
             }
-            _ => Err(VmError::Type("foreach over something that is not an array, a string or a form".into())),
+            other => Err(VmError::Type(format!("foreach over something that is not an array, a string or a form ({other:?})"))),
         }
     }
 
@@ -2393,6 +2395,20 @@ impl Vm<'_, '_> {
         let opt = |vm: &mut Self, k: usize| -> Result<Option<XVal>, VmError> { c.args.get(k).map(|a| vm.xeval(a)).transpose() };
         let text = |v: XVal| -> Option<String> { if let XVal::Str(s) = v { Some(s) } else { None } };
         Ok(Some(match n {
+            // `(eval <expression>)` inside an expression: the expression's value
+            // [documented: Eval; observed: High and Dry's Script Runner files pass
+            // `(eval GetINIFloat_Cached …)` as an argument]; with several arguments the
+            // last, as a comma list would read [hypothesis].
+            "eval" => match c.args.len() {
+                0 => XVal::Num(0.0),
+                k => {
+                    let mut v = XVal::Num(0.0);
+                    for i in 0..k {
+                        v = val(self, i)?;
+                    }
+                    v
+                }
+            },
             // [documented: Sv Construct] a new string from the format and its values.
             "sv_construct" => XVal::Str(self.format_arg(c, 0)?.0),
             // [documented: Sv Length] -1 for an invalid string.

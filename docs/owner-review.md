@@ -449,3 +449,8 @@ NVForever's own compiler. Hooks for ESP scripts are a third option.
   on the same rule: 9.60 is the most High and Dry's mods ask (TTW's 941 still met); ySI
   stops without yUI 1.40 (its two functions are built); one mod asks whether Improved
   Console is installed. *If you rule otherwise:* those mods' requirement boxes come back.
+- **Engine Optimizations 100, HighResLocalMaps 12, Overcharge 120, AnhNVSE 131, SUP 855
+  reported installed** (2026-11-09), on the same rule and at the versions the original
+  reports with High and Dry: MCM Extender's checker reads them from the mods' MCM menus
+  (Modern Minimap lists the first two) and showed "Outdated xNVSE plugins" at start-up.
+  *If you rule otherwise:* that box comes back.

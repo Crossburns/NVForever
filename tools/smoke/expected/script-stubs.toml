@@ -19,7 +19,7 @@ unhandled_used = 1
 assigned = 0
 implementable = 0
 needs_system = 0
-no_op = 4
+no_op = 5
 
 # History (moved from scenarios.toml, 2026-10-19; the newest last):
 # Karma and crime (claude/karma-crime) implemented six
