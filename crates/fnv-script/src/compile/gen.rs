@@ -75,6 +75,42 @@ fn lambda_open(low: &str) -> Option<(usize, usize)> {
     None
 }
 
+/// Where a line opens an arrow lambda whose body is the lines that follow, `({params} =>`
+/// with nothing after the arrow, closed by a line that starts with `)` [observed:
+/// FreePostMojave.esm, `CallWhen ({} =>` then two statements then `) ({} => MenuMode == 0)`;
+/// its compiled bytes hold a lambda of those statements]: the `(`'s offset and the text
+/// inside the braces.
+fn arrow_open(text: &str) -> Option<(usize, String)> {
+    let mut from = 0;
+    while let Some(k) = text[from..].find('(') {
+        let at = from + k;
+        let rest = text[at + 1..].trim_start();
+        if let Some(inner) = rest.strip_prefix('{') {
+            if let Some(close) = inner.find('}') {
+                let after = inner[close + 1..].trim_start();
+                if let Some(tail) = after.strip_prefix("=>") {
+                    if tail.trim().is_empty() {
+                        return Some((at, inner[..close].to_string()));
+                    }
+                }
+            }
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// A block lambda being read (`take_lambdas`): its first line, the text before it,
+/// its parameter names, its body so far, and whether it is an arrow lambda (closed by
+/// `)`) rather than a `begin function` one (closed by `end)`).
+struct OpenLambda {
+    first: lex::Line,
+    before: String,
+    names: Vec<String>,
+    body: Vec<lex::Line>,
+    arrow: bool,
+}
+
 /// An open `If` chain: where its last marker's skip count goes, and that marker's
 /// statement index.
 struct Chain {
@@ -254,22 +290,32 @@ impl<'a> Gen<'a> {
     /// the expression parser compiles where it stands.
     fn take_lambdas(&mut self, lines: Vec<lex::Line>) -> Vec<lex::Line> {
         let mut out: Vec<lex::Line> = Vec::new();
-        let mut open: Vec<(lex::Line, String, Vec<String>, Vec<lex::Line>)> = Vec::new();
+        let mut open: Vec<OpenLambda> = Vec::new();
         for l in lines {
             let low = l.text.to_ascii_lowercase();
             if let Some((at, len)) = lambda_open(&low) {
                 let after = &l.text[at + len..];
                 let names = after.split(['{', '}', ',', ' ']).filter(|w| !w.is_empty()).map(str::to_string).collect();
                 let names: Vec<String> = names;
-                open.push((l.clone(), l.text[..at].to_string(), names, Vec::new()));
+                open.push(OpenLambda { first: l.clone(), before: l.text[..at].to_string(), names, body: Vec::new(), arrow: false });
                 continue;
             }
+            if let Some((at, inner)) = arrow_open(&l.text) {
+                let names = inner.split([',', ' ']).filter(|w| !w.is_empty()).map(str::to_string).collect();
+                open.push(OpenLambda { first: l.clone(), before: l.text[..at].to_string(), names, body: Vec::new(), arrow: true });
+                continue;
+            }
+            let arrow = open.last().is_some_and(|o| o.arrow);
             let closes = {
                 let t = low.trim_start();
-                t.starts_with("end") && t[3..].trim_start().starts_with(')')
+                if arrow {
+                    t.starts_with(')')
+                } else {
+                    t.starts_with("end") && t[3..].trim_start().starts_with(')')
+                }
             };
             if closes && !open.is_empty() {
-                let (first, before, names, body) = open.pop().unwrap_or_else(|| unreachable!());
+                let OpenLambda { first, before, names, body, .. } = open.pop().unwrap_or_else(|| unreachable!());
                 let i = self.lambdas.len();
                 self.lambdas.push((names, body));
                 let rest = &l.text[l.text.find(')').map_or(l.text.len(), |p| p + 1)..];
@@ -280,17 +326,17 @@ impl<'a> Gen<'a> {
                 let text = format!("{before}{gap}__lambda{i}{rest}");
                 let merged = lex::Line { no: first.no, toks: lex::tokens(&text), text };
                 match open.last_mut() {
-                    Some(o) => o.3.push(merged),
+                    Some(o) => o.body.push(merged),
                     None => out.push(merged),
                 }
                 continue;
             }
             match open.last_mut() {
-                Some(o) => o.3.push(l),
+                Some(o) => o.body.push(l),
                 None => out.push(l),
             }
         }
-        for (first, ..) in open {
+        for OpenLambda { first, .. } in open {
             self.diags.push(Diag { line: first.no, kind: "lambda_without_end", error: true, detail: String::new() });
         }
         out
@@ -556,7 +602,7 @@ impl<'a> Gen<'a> {
         if head.is_none() && self.var(name).is_some() {
             return None;
         }
-        let opcode = self.table.by_name(name)?;
+        let opcode = self.table.script_by_name(name)?;
         let f = self.table.get(opcode)?;
         let params = match f.param_count {
             Some(n) => Some(n),
@@ -974,7 +1020,7 @@ impl<'a> Gen<'a> {
     fn calls_extender(&self) -> bool {
         lex::xtokens(&self.text).iter().filter(|t| t.kind == lex::XKind::Word).any(|t| {
             let name = t.text.rsplit('.').next().unwrap_or(&t.text);
-            self.table.by_name(name).is_none() && self.table.unnumbered.contains_key(&name.to_ascii_lowercase()) && self.var(name).is_none()
+            self.table.script_by_name(name).is_none() && self.table.unnumbered.contains_key(&name.to_ascii_lowercase()) && self.var(name).is_none()
         })
     }
 

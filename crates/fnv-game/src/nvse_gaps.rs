@@ -65,6 +65,7 @@ pub struct GapsState {
     /// High and Dry batch hnd1's state (ShowOff's aux string maps).
     pub hnd: crate::nvse_hnd1::HndState,
     pub hnd2: crate::nvse_hnd2::Hnd2State,
+    pub hnd3: crate::nvse_hnd3::Hnd3State,
     /// The fourth JIP batch's state (`crate::nvse_jip4`).
     pub jip4: crate::nvse_jip4::Jip4State,
     /// The shots in flight, for the projectile functions (`crate::nvse_proj`).

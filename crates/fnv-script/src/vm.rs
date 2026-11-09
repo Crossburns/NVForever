@@ -3253,6 +3253,9 @@ fn out_params(lname: &str) -> Option<&'static [usize]> {
         // [documented: the catalogue's parameter names, rOut gOut bOut; xOut yOut].
         "getsystemcoloralt" => &[1, 2, 3],
         "getcameramovement" => &[0, 1],
+        // [documented: the catalogue's parameter names, xOut yOut zOut; JIP's map mults].
+        "worldtoscreen" => &[0, 1, 2],
+        "getworldmapposmults" => &[0, 1],
         _ => return None,
     })
 }

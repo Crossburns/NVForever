@@ -31,3 +31,48 @@ bench save) [observed]:
   still 1 after `SetExtraAccuracyPenaltyMult 2.5` on the weapon; the setter returned 0.
 - JIP's `SetObjectiveText quest index "text" [vars]` replaces the objective's display
   text for GetObjectiveText, the Pip-Boy and the HUD; for the session [hypothesis].
+
+## hnd3 (2026-11-09): the rest of the load order's extender functions
+
+`crates/fnv-game/src/nvse_hnd3.rs`, the last 137 functions the load order called that
+had no handler (`fnvtool ext coverage`: missing 137 → 0). Three kinds [hypothesis for
+each reading, from the functions' names and catalogue parameters]:
+
+- A vanilla function with more arguments runs that function: `SetAngleEx` (SetAngle on
+  each axis), `PlayIdleEx`, `PushActorAwayAlt` / `PushActorNoRagdoll` (PushActorAway
+  by the force), `FireWeaponEx`, `TravelToRef` / `MoveToNode` (MoveTo, the node not
+  told apart), `MoveToPosStr` / `RefToPosStr` (SetPos / GetPos as `"x y z"`),
+  `GetArmorEffectiveDR/DT` (the actor's damage resistance / threshold),
+  `SetBaseFactionRank`, `DismemberLimb` (the limb's condition to 0), the CCC functions
+  that are a faction test, a line or a distance.
+- A setter keeps its value for the session and its getter reads it back:
+  `SetRefExtraData`, `SetDetonationTimer`, `SetActivatorPrompt`, `SetScriptDisabled`,
+  `AttachLight` / `RemoveLight` (kept by node, not drawn yet), `AddScriptVariable` /
+  `HasVariableAdded`, Companion Command & Control's saved numbers, strings and forms,
+  the map and reputation icons, the on/off toggles.
+- What only the original's renderer, camera or interface has answers as nothing is
+  there: `WorldToScreen` (off screen, outputs 0), the UI projection, camera and
+  highlight calls, the recipe, quantity and text input menus (closed).
+
+## Source forms (compiler, 2026-11-09)
+
+The source of these compiled where the compiler had refused it (`fnv-script` test
+`compile_hnd`; source failures 14 → 7):
+
+- A comma straight after a function's name: `ListGetNthForm, List, iPos` [observed:
+  Unofficial Patch NVSE Plus].
+- `GetActiveObjectives` takes an optional quest [observed: Main And Pause Menus
+  Overhaul passes one and its compiled bytes hold the call].
+- An extender expression counts a vanilla function's xEdit parameter types when the
+  catalogue lists no parameters: `rAux.GetFactionRank Faction > 9` took no argument
+  [observed: JIP Companions Command & Control].
+- A console-only command that an extender also defines is the extender's in a script
+  (`SetStringSetting`; `FunctionTable::script_by_name`) [observed: RG_PrimmPlayerHome].
+- An arrow lambda whose body is the following lines, `({params} =>` … `)` [observed:
+  FreePostMojave's `CallWhen ({} =>`].
+
+Left: `ySIGetTagTrait` (a plugin's function the catalogue lacks), `aHUD.x` and
+`rActorRef` (names from plugins not in the load order), a missing `+` in
+MrShersh Functional Backpack's own line, and WeaponModCraftInfo written in xNVSE's
+newer C-style syntax (`name …;`, `fn () {…}`, `for (… in …)`). They run from their
+compiled bytes, as the original runs them.

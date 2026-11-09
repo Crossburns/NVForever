@@ -305,12 +305,15 @@ impl Gen<'_> {
     }
 
     fn xfunction(&self, name: &str) -> Option<XFn> {
-        if let Some(op) = self.table.by_name(name) {
+        if let Some(op) = self.table.script_by_name(name) {
             let f = self.table.get(op)?;
             let params = match f.param_count {
                 Some(n) => Some(n),
                 None if f.params.iter().any(|p| p.name.starts_with("...")) => None,
-                None => Some(f.params.len().max(f.encodings.len())),
+                // xEdit's types count too: GetFactionRank lists no parameters but its
+                // faction (`rAux.GetFactionRank Faction > 9` took none and left the
+                // faction over) [observed: JIP Companions Command & Control].
+                None => Some(f.params.len().max(f.encodings.len()).max(f.xedit_params)),
             };
             return Some(XFn { func: FuncId::Opcode(op), params, opcode: Some(op), aware: false });
         }
@@ -490,7 +493,11 @@ impl Gen<'_> {
                 break;
             }
             let mut comma = false;
-            if !args.is_empty() && p.peek().is_some_and(|t| t.kind == XKind::Comma) {
+            // A comma between arguments, or one straight after the function's name
+            // (`ListGetNthForm, List, iPos`) [observed: Unofficial Patch NVSE Plus, whose
+            // compiled bytes hold the call with both arguments].
+            let first_comma = args.is_empty() && f.params != Some(0) && p.peek2().is_some_and(|n| starts_operand(Some(n)));
+            if (!args.is_empty() || first_comma) && p.peek().is_some_and(|t| t.kind == XKind::Comma) {
                 p.next();
                 comma = true;
             }

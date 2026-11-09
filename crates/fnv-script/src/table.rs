@@ -106,6 +106,9 @@ pub struct Function {
     /// Parameters the compiler takes when the shipped calls show more than the catalogue
     /// documents (encodings.json `compiler.param_counts`).
     pub param_count: Option<usize>,
+    /// How many parameters xEdit's condition table gives the function (its
+    /// `xedit_param_types`), for one that has no other parameter list.
+    pub xedit_params: usize,
     /// Whether a call has a parameter block, where the catalogue's list would say
     /// otherwise (encodings.json `compiler.block`).
     pub block: Option<bool>,
@@ -343,6 +346,7 @@ impl FunctionTable {
                     trailer,
                     encoding_source: source,
                     param_count: param_counts.get(&op).and_then(Value::as_u64).map(|n| n as usize),
+                    xedit_params: xedit_types.len(),
                     block: blocks.get(&op).and_then(Value::as_bool),
                     number_types: number_types
                         .get(&op)
@@ -399,6 +403,17 @@ impl FunctionTable {
 
     /// Encoding of parameter `position` (0-based) of `opcode`; unknown opcodes and
     /// positions beyond the list are tagged values.
+    /// The opcode a script's call of `name` is compiled to: [`Self::by_name`], except a
+    /// console-only command an extender also defines under that name, which a script calls
+    /// as the extender's (SetStringSetting: a console command and Lutana's function)
+    /// [observed: RG_PrimmPlayerHome's `SetStringSetting "s" $sv` compiles in the original,
+    /// two string arguments].
+    pub fn script_by_name(&self, name: &str) -> Option<u16> {
+        let op = self.by_name(name)?;
+        let twin = self.get(op).is_some_and(|f| f.console_only) && self.unnumbered.contains_key(&name.to_ascii_lowercase());
+        (!twin).then_some(op)
+    }
+
     pub fn param_enc(&self, opcode: u16, position: usize) -> ParamEnc {
         self.get(opcode).and_then(|f| f.encodings.get(position).cloned()).unwrap_or(ParamEnc::Value)
     }
