@@ -58,6 +58,8 @@ struct CpuMeshes {
     skipped_images: Vec<AssetId<Image>>,
     /// Images drawn into on the GPU (screens: the Pip-Boy's, terminals'), not yet watched.
     new_live: Vec<AssetId<Image>>,
+    /// Meshes changed after Remix had them (particles, lips, dismembered bodies).
+    changed: Vec<AssetId<Mesh>>,
 }
 
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
@@ -98,6 +100,10 @@ struct RemixState {
     why: [u32; 4],
     shot_raised: bool,
     shot_taken: bool,
+    /// How many times each changed mesh was made again (in its Remix hash).
+    mesh_gen: HashMap<AssetId<Mesh>, u32>,
+    /// Changed meshes made again since the last stats line.
+    remade: u64,
     /// Interior fill light's strength (NVF_REMIX_FILL_SCALE).
     fill_scale: f32,
     /// The UI overlay's last picture and its size.
@@ -181,7 +187,9 @@ fn take_new_meshes(mut ev: MessageReader<AssetEvent<Mesh>>, meshes: Res<Assets<M
         match e {
             AssetEvent::Added { id } | AssetEvent::Modified { id } => {
                 if let Some(c) = meshes.get(*id).and_then(convert_mesh) {
-                    cpu.by_id.insert(*id, Arc::new(c));
+                    if cpu.by_id.insert(*id, Arc::new(c)).is_some() {
+                        cpu.changed.push(*id);
+                    }
                 }
             }
             AssetEvent::Removed { id } | AssetEvent::Unused { id } => {
@@ -383,6 +391,22 @@ fn frame(
     let t0 = std::time::Instant::now();
     st.child.follow();
 
+    // Meshes changed since Remix got them: their Remix meshes are made again, under a
+    // new generation's hash (one hash made again after its destroy did not show, as
+    // with lights) [observed 2026-11-09: particles kept their first shape].
+    let changed: HashSet<AssetId<Mesh>> = std::mem::take(&mut cpu.changed).into_iter().collect();
+    if !changed.is_empty() {
+        for id in &changed {
+            *st.mesh_gen.entry(*id).or_default() += 1;
+        }
+        st.remade += changed.len() as u64;
+        let stale: Vec<_> = st.meshes.keys().filter(|k| changed.contains(&k.0)).copied().collect();
+        for k in stale {
+            if let Some(h) = st.meshes.remove(&k) {
+                st.remix.destroy_mesh(h);
+            }
+        }
+    }
     for id in std::mem::take(&mut cpu.skipped_images) {
         st.failed_textures.insert(hash_of(&id));
     }
@@ -568,7 +592,7 @@ fn frame(
                     moved = data.verts.iter().map(|v| HardcodedVertex { texcoord: t.transform_point2(Vec2::from(v.texcoord)).to_array(), ..*v }).collect();
                     &moved
                 };
-                match st.remix.create_mesh_skinned(hash_of(&key), verts, &data.idx, rm, skin) {
+                match st.remix.create_mesh_skinned(hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0))), verts, &data.idx, rm, skin) {
                     Ok(h) => {
                         st.meshes.insert(key, h);
                         h
@@ -769,7 +793,8 @@ fn frame(
     if st.frames % 600 == 1 {
         info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3]);
         let n = 600.0;
-        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n);
+        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade);
+        st.remade = 0;
         st.build_time = Default::default();
         st.present_time = Default::default();
     }
@@ -926,6 +951,8 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         why: [0; 4],
         shot_raised: false,
         shot_taken: false,
+        mesh_gen: HashMap::new(),
+        remade: 0,
         fill_scale: scale("NVF_REMIX_FILL_SCALE", 20000.0),
         ui_last: None,
         hidden: HashSet::new(),

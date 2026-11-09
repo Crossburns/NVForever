@@ -39,6 +39,9 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   sphere of 16 units, 24 above the eye) in the ambient colour stands in
   (`NVF_REMIX_FILL_SCALE`, default 20000) [design: tuned by eye in the Prospector
   Saloon].
+- **Changing meshes.** A mesh changed after Remix got it (particles, lip shapes,
+  dismembered bodies) is made again under a new generation's hash; about 23 a frame in
+  Goodsprings [observed 2026-11-09].
 - **Terrain.** A land quadrant's base mesh and its blended layer meshes (same vertex
   grid, the layer's opacity in the vertex alpha) go as one mesh with Remix Plus's
   terrain-layers material: the base and the top seven layers, weighted per vertex as the
@@ -78,7 +81,7 @@ every 600 frames gives the build and Present times.
 ## Not yet
 
 - Water waves (the surface is flat), NVForever's sky meshes (Remix draws its own sky),
-  particles (additive ones show, blended over the scene).
+  particle systems as Remix particles (they go as meshes, made again as they change).
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.
 
