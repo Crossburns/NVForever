@@ -21,6 +21,8 @@ const XMARKER: u32 = 0x0000_003B;
 pub struct JipEvents {
     pub handlers: Vec<JipHandler>,
     pub main_loop: Vec<MainLoop>,
+    /// Main-loop registrations refused for having no function (reported once).
+    pub main_loop_null_noted: Vec<Option<FormId>>,
     seq: u64,
     /// Each actor's hit in progress, or its last one (task J7, jip-hit-info.md §5).
     pub hits: std::collections::HashMap<FormId, JipHit>,
@@ -151,6 +153,14 @@ impl Game<'_> {
     /// SetGameMainLoopCallback func add [delay] [flags].
     pub(crate) fn jip_main_loop(&mut self, func: XVal, add: bool, delay: u64, flags: u32, on: Option<FormId>) {
         self.jip.main_loop.retain(|m| !(m.func == func && m.on == on));
+        // No function (0): nothing to call each frame; said once.
+        if add && (matches!(func, XVal::Ref(0)) || matches!(func, XVal::Num(x) if x == 0.0)) {
+            if self.jip.main_loop_null_noted.is_empty() {
+                self.emit(crate::trace::EventKind::Skipped { unit: "SetGameMainLoopCallback".into(), what: format!("no function script given (callback {func:?}, on {on:?}); not registered") });
+            }
+            self.jip.main_loop_null_noted.push(on);
+            return;
+        }
         if add {
             let delay = delay.max(1);
             self.jip.main_loop.push(MainLoop { func, on, delay, flags, due: self.frame + delay });

@@ -21,6 +21,8 @@ pub struct Jip3State {
     pub jg_handlers: Vec<(JgEvent, XVal, Option<FormId>)>,
     /// FreezeTime's mode: game time stands still (`Game::tick`).
     pub time_frozen: bool,
+    /// Registrations refused for having no function, already reported.
+    pub null_handler_noted: std::collections::HashSet<String>,
 }
 
 /// The JohnnyGuitar events whose handlers this file keeps.
@@ -406,6 +408,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 _ => JgEvent::RenderUpdate,
             };
             let Some(f) = args.get(1).cloned() else { return Some(Ok(zero)) };
+            // No function (0): nothing is registered, and the call says so once, with
+            // where it came from; a 0 handler would only fail at every event.
+            if matches!(f, XVal::Ref(0)) || matches!(f, XVal::Num(x) if x == 0.0) {
+                let what = format!("{name}: no function script given (handler {f:?}); self {:?}, quest {:?}", ctx.self_ref, ctx.quest);
+                if g.gaps.jip3.null_handler_noted.insert(what.clone()) {
+                    g.emit(crate::trace::EventKind::Skipped { unit: "JohnnyGuitar handler".into(), what });
+                }
+                return Some(Ok(zero));
+            }
             let filter = form(args, 3);
             g.gaps.jip3.jg_handlers.retain(|(e, h, l)| !(*e == ev && *h == f && *l == filter));
             if num(args, 0, 1.0) != 0.0 {
