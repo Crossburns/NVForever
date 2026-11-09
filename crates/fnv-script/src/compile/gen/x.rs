@@ -464,6 +464,13 @@ impl Gen<'_> {
         f.opcode.is_none() && self.table.unnumbered.get(&n.to_ascii_lowercase()).and_then(|u| u.params.get(k)).is_some_and(|p| p.kind == "axis" || p.wiki_type.as_deref().is_some_and(axis_letters))
     }
 
+    /// An extender function without an opcode whose parameter `k` takes an animation
+    /// group: compiled as its u16 code (`crate::table::is_anim_group`).
+    fn anim_group_param(&self, f: &XFn, k: usize) -> bool {
+        let FuncId::Name(n) = &f.func else { return false };
+        f.opcode.is_none() && self.table.unnumbered.get(&n.to_ascii_lowercase()).and_then(|u| u.params.get(k)).is_some_and(crate::table::is_anim_group)
+    }
+
     /// The function's parameter `k` takes a form, or is named for a global (the base
     /// game's GetGlobalValue included).
     fn form_param(&self, f: &XFn, k: usize) -> bool {
@@ -528,6 +535,7 @@ impl Gen<'_> {
             let enc = match f.opcode {
                 Some(o) => self.table.param_enc(o, args.len()),
                 None if self.axis_param(f, args.len()) => ParamEnc::Axis,
+                None if self.anim_group_param(f, args.len()) => ParamEnc::Enum("anim_group".into()),
                 None => ParamEnc::Value,
             };
             // An NVSE-aware function inside an expression (a `let`, an `if eval`, an
@@ -587,7 +595,20 @@ impl Gen<'_> {
         // (`Health + 50`) is not part of it.
         let single = p.peek().is_some_and(|t| matches!(t.kind, XKind::Word | XKind::Str))
             && !p.peek2().is_some_and(|n| n.kind == XKind::LBracket || n.is(XKind::Op, "->"));
-        if single && *enc != ParamEnc::Value {
+        // A variable where an enumeration's name goes (`player.GetAV iS`, iS holding an
+        // actor-value code) is a value, read when the call runs [observed: Vanilla UI
+        // Plus.esp compiled so in the GECK with xNVSE, ext-bytecode.md §5].
+        let var_for_enum = |s: &Self, t: &crate::compile::lex::XTok, kind: &str| {
+            t.kind == XKind::Word
+                && t.text.parse::<u16>().is_err()
+                && !s.enums.get(kind).is_some_and(|m| m.contains_key(&t.text.to_ascii_lowercase()))
+                && s.var(&t.text).is_some()
+        };
+        let enum_var = match enc {
+            ParamEnc::Enum(kind) => single && p.peek().is_some_and(|t| var_for_enum(self, t, kind)),
+            _ => false,
+        };
+        if single && *enc != ParamEnc::Value && !enum_var {
             let t = p.next()?;
             return match enc {
                 ParamEnc::Enum(kind) => {

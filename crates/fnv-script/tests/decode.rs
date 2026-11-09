@@ -348,12 +348,13 @@ fn unknown_bytes_are_kept_raw_and_counted() {
 #[test]
 fn unknown_opcode_decodes_with_tagged_values() {
     let t = table();
-    let bytes = st(0x127C, &params(1, &n(1)));
+    // Past the base game's last command (0x127F GetInCharGen, its command table).
+    let bytes = st(0x13F0, &params(1, &n(1)));
     let d = run(&t, &bytes);
     assert_eq!(d.report.raw_total(), 0);
     assert_eq!(d.report.issues[0].kind, "unknown_opcode");
     let u = unit(&[], vec![], bytes);
-    assert_eq!(text(&t, &u, &d), ["#0x127c 1"]);
+    assert_eq!(text(&t, &u, &d), ["#0x13f0 1"]);
 }
 
 #[test]

@@ -136,11 +136,11 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         }
         // [observed: Idle reads 1 on a standing actor]
         "isanimplayingalt" => {
-            let want = text(args, 0);
+            let want = group_name(g, args, 0);
             XVal::Num(f64::from(u8::from(g.senses.anim.get(&a).and_then(|s| s.group).is_some_and(|gr| gr.eq_ignore_ascii_case(&want)))))
         }
         "getanimationsbyanimgroup" => {
-            let want = text(args, 0);
+            let want = group_name(g, args, 0);
             let st = g.senses.anim.get(&a);
             let v = st.filter(|s| s.group.is_some_and(|gr| gr.eq_ignore_ascii_case(&want))).and_then(|s| s.clip.clone()).into_iter().map(XVal::Str).collect();
             list(g, v)
@@ -148,4 +148,13 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         _ => return None,
     };
     Some(Ok(v))
+}
+
+/// An animation group argument by name: compiled calls give its code (the GECK stores
+/// it so, ext-bytecode.md §5), source run by name may give the name.
+fn group_name(g: &Game<'_>, args: &[XVal], i: usize) -> String {
+    match args.get(i) {
+        Some(XVal::Num(n)) => g.anim_group_name(*n as u16).unwrap_or_default(),
+        _ => text(args, i),
+    }
 }

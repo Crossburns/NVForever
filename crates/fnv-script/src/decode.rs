@@ -527,6 +527,11 @@ fn piece(c: &mut Ctx<'_>, f: &Flat<'_>) -> Piece {
         return p;
     }
     if f.opcode >= op::FIRST_FUNCTION && f.opcode != 0xFFFF {
+        if f.opcode < crate::xbytes::op::FIRST_EXTENDER && (f.body.starts_with(&[0xFF, 0xFF]) || (c.table.get(f.opcode).is_some() && !plain_call_reads(c.table, f.opcode, f.body))) {
+            if let Some(expr) = geck_extender_call(c, f.on, f.opcode, f.body) {
+                return Piece::Stmt(Stmt::Eval { expr });
+            }
+        }
         return Piece::Stmt(Stmt::Call { call: call(c, f.on, f.opcode, f.body) });
     }
     if f.on.is_some() {
@@ -543,6 +548,24 @@ fn piece(c: &mut Ctx<'_>, f: &Flat<'_>) -> Piece {
             if event == crate::xbytes::op::FUNCTION_EVENT {
                 if let Some(p) = crate::xbytes::function_params(rest) {
                     return Piece::Begin { event: FUNCTION_BLOCK, len, params: Some(p) };
+                }
+            }
+            // `Begin _MenuMode 1003`, the extender's compiler override: parameter count
+            // FE FF, then the arguments in the expression form [observed:
+            // ext-bytecode.md §5, Vanilla UI Plus.esp]. A number is the block's own
+            // parameter; the override only changes how the calls inside are compiled.
+            if let Some(x) = rest.strip_prefix(&[0xFE, 0xFF]) {
+                let consts = crate::xbytes::expr_args(c.table, x).and_then(|a| {
+                    a.iter()
+                        .map(|e| match e {
+                            XExpr::Num { value, .. } if value.fract() == 0.0 => Some(Arg::Int(*value as i32)),
+                            XExpr::Num { value, .. } => Some(Arg::Float(*value)),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                });
+                if let Some(p) = consts {
+                    return Piece::Begin { event, len, params: Some(p) };
                 }
             }
             let params = params(c, rest, None);
@@ -628,10 +651,23 @@ fn geck_extender(c: &mut Ctx<'_>, f: &Flat<'_>) -> Option<Piece> {
 /// extender opcode with its arguments.
 fn geck_extender_call(c: &mut Ctx<'_>, on: Option<RefIndex>, opcode: u16, blob: &[u8]) -> Option<XExpr> {
     use crate::xbytes as xb;
-    if opcode < xb::op::FIRST_EXTENDER {
-        return None;
-    }
     let t = c.table;
+    // A base-game function given values the GECK could not store as its parameters
+    // (a variable for an actor value: `player.GetAV iS`): parameter count FF FF, then
+    // the expression arguments [observed: ext-bytecode.md §5, Vanilla UI Plus.esp].
+    // A base-game call whose arguments include an inline expression (`SwapTexture (This)
+    // "…"`: FF FF, u16 length, expression, in a parameter's place) reads with the
+    // extender's typed reading when the base game's leaves bytes [observed:
+    // ext-bytecode.md §5, Securitrons On Alert.esm].
+    if opcode < xb::op::FIRST_EXTENDER {
+        let args = match blob.strip_prefix(&[0xFF, 0xFF]) {
+            Some(rest) => xb::expr_args(t, rest)?,
+            None if t.get(opcode).is_some() && !plain_call_reads(t, opcode, blob) => xb::typed_args(t, opcode, blob)?,
+            None => return None,
+        };
+        c.report.calls += 1;
+        return Some(XExpr::Call { call: XCall { on: on.map(|r| Box::new(XExpr::Ref { r })), func: FuncId::Opcode(opcode), args } });
+    }
     if opcode == xb::op::EVAL {
         return xb::single(t, blob);
     }

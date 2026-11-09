@@ -213,6 +213,10 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, 
         }
         std::fs::write(dir.join("source_failures.txt"), out)?;
     }
+    // Units that run with bytes the decoder could not read (after the source compile):
+    // the statements or arguments the VM skips.
+    let mut broken: Vec<(String, usize)> = data.units.iter().filter(|c| c.raw > 0).map(|c| (c.unit.key(), c.raw)).collect();
+    broken.sort_by_key(|b| std::cmp::Reverse(b.1));
     let mut fails: Vec<_> = by_plugin.into_iter().collect();
     fails.sort_by_key(|f| std::cmp::Reverse(f.1.len()));
     Ok(json!({
@@ -222,6 +226,7 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, 
             "units_run_from_source": data.issues.count("script_compiled_from_source"),
             "units_source_does_not_compile": data.source_failures.len(),
             "units_extender_without_source": no_source.values().sum::<u64>(),
+            "units_running_with_undecoded_bytes": broken.len(),
             "script_runner_files": sr.len(),
             "script_runner_compile_failures": compile.len(),
             "extender_functions_used": used.len(),
@@ -230,6 +235,7 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, 
         "functions_not_handled": rows.into_iter().map(|r| r.2).collect::<Vec<_>>(),
         "source_failures_by_plugin": fails.iter().map(|(p, v)| json!({"plugin": p, "units": v.len(), "samples": v.iter().take(4).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "extender_without_source": no_source,
+        "units_running_with_undecoded_bytes": broken.iter().map(|(k, n)| json!({"unit": k, "raw": n})).collect::<Vec<_>>(),
         "script_runner_compile": compile,
     }))
 }

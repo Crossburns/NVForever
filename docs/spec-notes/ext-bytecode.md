@@ -112,6 +112,12 @@ call (0x100F, its actor-value code 0x0010), and the bracketed argument becomes *
 u16 length, an extender expression** (here a call of 0x100E on reference 1, `B 50`, `+`)
 [observed: case 20].
 
+A variable where a base-game parameter takes a code (`set iSkill to player.GetAV iS`,
+iS a short holding an actor-value code) makes the whole parameter list the extender's:
+the parameter count is **`FF FF`**, then a u8 count and that many (u16 length counting
+itself, extender expression), here `01`, `08 00`, `V` of local 32 [observed: Vanilla UI Plus.esp,
+its compiled quest script; GECK with xNVSE].
+
 ## 6. Variable types in SLSD
 
 | Declared as | SLSD type byte | Evidence |

@@ -218,7 +218,7 @@ fn lets(src: &str) -> Vec<String> {
     let (_, p) = build(src);
     let mut out = Vec::new();
     p.walk(&mut |s| match s {
-        Stmt::Let { expr } => out.push(x(expr)),
+        Stmt::Let { expr } | Stmt::Eval { expr } => out.push(x(expr)),
         Stmt::If { arms, .. } => {
             for a in arms {
                 if let [Token::X { e }] = &a.cond.0[..] {
@@ -245,6 +245,29 @@ fn extender_precedence_follows_the_operator_table() {
 fn let_macro_takes_divide_and_bit_or() {
     let l = lets("float f\nint i\nbegin GameMode\nf /= 700\ni |= 4\nend");
     assert_eq!(l, ["(v1 Div= 700)", "(v2 BitOr= 4)"]);
+}
+
+#[test]
+fn let_macro_takes_colon_assign_and_quest_variables() {
+    let l = lets("int i
+begin GameMode
+i:= 1
+TestQuest.bDone := i
+end");
+    assert_eq!(l.len(), 2, "{l:?}");
+    assert_eq!(l[0], "(v1 Set= 1)");
+}
+
+#[test]
+fn eval_statement_and_a_variable_for_an_actor_value() {
+    let l = lets("int i
+int s
+begin GameMode
+eval i > 0 && (s = 1)
+let i := player.GetAV s
+end");
+    assert_eq!(l.len(), 2, "{l:?}");
+    assert!(l[1].contains("100E(v2)"), "the variable is the argument: {}", l[1]);
 }
 
 #[test]
@@ -513,11 +536,11 @@ fn compiler_override_blocks_read_every_line_with_the_extender_grammar() {
     assert_eq!(p.blocks[0].event, 0, "the block is GameMode");
     let Stmt::If { arms, .. } = &body(&p)[0] else { panic!() };
     let [Token::X { e }] = &arms[0].cond.0[..] else { panic!("an extended condition: {:?}", arms[0].cond) };
-    assert_eq!(x(e), "(Sin(14) Eq 1)", "Sin is the extender's (no opcode)");
+    assert_eq!(x(e), "(121C(14) Eq 1)", "Sin is the base game's 0x121C [observed: its command table]");
     assert!(matches!(&arms[0].body[0], Stmt::Let { .. }));
     // The same line outside an override block: (Sin 14) == 1.
     let l = lets("float f\nbegin GameMode\nif eval Sin 14 == 1\nendif\nend");
-    assert_eq!(l[0], "if (Sin(14) Eq 1)");
+    assert_eq!(l[0], "if (121C(14) Eq 1)");
 }
 
 // ---- user-defined functions and lambdas (task A11) --------------------------------
@@ -739,7 +762,7 @@ fn override_arguments_take_arithmetic_not_comparisons() {
     // `Abs -3 + 1` is 2 and `Sin 90 > 0.5` is (Sin 90) > 0.5.
     let l = lets("float r\nbegin _GameMode\nlet r := Abs -3 + 1\nlet r := Sin 90 > 0.5\nend");
     assert_eq!(l[0], "(v1 Set= 1221(((Neg 3) Add 1)))");
-    assert_eq!(l[1], "(v1 Set= (Sin(90) Gt 0.5))");
+    assert_eq!(l[1], "(v1 Set= (121C(90) Gt 0.5))");
 }
 
 #[test]
@@ -763,8 +786,9 @@ fn a_failing_condition_is_false_and_the_script_goes_on() {
 
 #[test]
 fn math_and_rand() {
-    let h = run("float s\nfloat r\nfloat f\nbegin GameMode\nlet s := (Sin 90) + Cos 0\nlet r := Rand 5, 5\nlet f := Floor 2.7 + Pow 2, 3\nend");
-    assert_eq!(h.0[&1], Value::Num(2.0), "degrees [observed]");
+    let h = run("float s\nfloat r\nfloat f\nbegin GameMode\nlet s := (Sinh 0) + Log10 100\nlet r := Rand 5, 5\nlet f := Floor 2.7 + Pow 2, 3\nend");
+    // Sin and Cos are the base game's (0x121C, 0x121D: fnv-game functions::misc).
+    assert_eq!(h.0[&1], Value::Num(2.0));
     assert_eq!(h.0[&2], Value::Num(5.0));
     assert_eq!(h.0[&3], Value::Num(10.0));
 }

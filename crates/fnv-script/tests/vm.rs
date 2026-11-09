@@ -362,10 +362,10 @@ fn calls_resolve_references_variables_and_enums() {
 #[test]
 fn unknown_opcodes_fail_strict_runs_and_are_skipped_otherwise() {
     let t = table();
-    let body = vec![call(0x127C, vec![]), set(short(1), vec![num(1.0)])];
+    let body = vec![call(0x13F0, vec![]), set(short(1), vec![num(1.0)])];
     let mut h = TestHost::default();
     let e = Vm::new(&t, &mut h, RunOpts { strict: true, max_steps: 100 }).run(&body).unwrap_err();
-    assert_eq!(e, VmError::UnknownOpcode(0x127C));
+    assert_eq!(e, VmError::UnknownOpcode(0x13F0));
     let mut h = TestHost::default();
     Vm::new(&t, &mut h, RunOpts { strict: false, max_steps: 100 }).run(&body).unwrap();
     assert_eq!(h.locals[&1], Value::Num(1.0));

@@ -506,3 +506,11 @@ pub fn add_item_to_leveled_list(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Va
     g.world.add_to_leveled_list(list, fnv_sim::forms::LeveledEntry { level, item, count, condition }).map_err(|e| e.to_string())?;
     none()
 }
+
+/// `SetShowQuestItems 0/1`, the base game's command 0x114E [observed: its command table,
+/// DumpCommandWikiDocs]: whether the inventory shows quest items, on by default
+/// [documented: SetShowQuestItems, "Shows (1, default)"]; Lutana's GetShowQuestItems reads it.
+pub fn set_show_quest_items(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    g.player.show_quest_items = Some(a.num(0).unwrap_or(1.0) != 0.0);
+    none()
+}

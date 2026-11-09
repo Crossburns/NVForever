@@ -78,8 +78,12 @@ fn oper(b: u8) -> Option<Oper> {
         0x07 => Bin(XOp::Lt),
         0x08 => Bin(XOp::Ge),
         0x09 => Bin(XOp::Le),
+        // `|` [observed: Enhanced Movement.esp `(1 << 7) | (1 << 9)`, 42 01 42 07 0C ... 0A].
+        0x0A => Bin(XOp::BitOr),
         0x0B => Bin(XOp::BitAnd),
         0x0C => Bin(XOp::Shl),
+        // `>>` [observed: DSJIPCCCAnims.esp `while (… .iActive >> (iSlot += 1)) & 1`].
+        0x0D => Bin(XOp::Shr),
         0x0E => Bin(XOp::Add),
         0x0F => Bin(XOp::Sub),
         0x10 => Bin(XOp::Mul),
@@ -247,6 +251,13 @@ pub(crate) fn args(table: &FunctionTable, opcode: u16, b: &[u8]) -> Option<Vec<X
     if opcode == CALL {
         return call_args(table, b);
     }
+    // Parameter count FF FF: the arguments in the expression form, for a call whose
+    // values the GECK could not store as its parameters [observed: ext-bytecode.md §5].
+    if let Some(rest) = b.strip_prefix(&[0xFF, 0xFF]) {
+        if let Some(a) = expr_args(table, rest) {
+            return Some(a);
+        }
+    }
     expr_args(table, b).or_else(|| typed_args(table, opcode, b))
 }
 
@@ -263,6 +274,17 @@ fn call_args(table: &FunctionTable, b: &[u8]) -> Option<Vec<XExpr>> {
         out.extend(expr_args(table, r.rest())?);
     }
     Some(out)
+}
+
+/// Whether parameter `k` of an extender function named by its opcode takes an animation
+/// group (the catalogue's type `AnimationGroup`, or a parameter named so).
+fn anim_group_param(table: &FunctionTable, opcode: u16, k: usize) -> bool {
+    table
+        .opcode_names
+        .get(&opcode)
+        .and_then(|n| table.unnumbered.get(&n.to_ascii_lowercase()))
+        .and_then(|u| u.params.get(k))
+        .is_some_and(crate::table::is_anim_group)
 }
 
 /// u8 count, then that many (u16 length counting itself, expression).
@@ -289,6 +311,12 @@ fn enc(table: &FunctionTable, opcode: u16, k: usize) -> ParamEnc {
         .and_then(|n| table.unnumbered.get(&n.to_ascii_lowercase()))
         .and_then(|u| u.params.get(k))
         .map(|p| p.kind.as_str());
+    // An animation group is its u16 code [observed: Enhanced Movement.esp
+    // `IsAnimPlayingAlt SpecialIdle` compiled as 01 00 02 00; JIP's
+    // SetOnPlayGroupEventHandler's group likewise].
+    if anim_group_param(table, opcode, k) {
+        return ParamEnc::Enum("anim_group".into());
+    }
     match kind {
         Some("string") => ParamEnc::String,
         Some("axis") => ParamEnc::Axis,
@@ -302,7 +330,7 @@ fn enc(table: &FunctionTable, opcode: u16, k: usize) -> ParamEnc {
 /// string variable, `s` + index; a format string takes values past the listed
 /// parameters) [observed]. A parameter `FF FF` + u16 length (counting itself) is an
 /// expression, or `FF FF 01` + u16 length (one function's form) [observed].
-fn typed_args(table: &FunctionTable, opcode: u16, b: &[u8]) -> Option<Vec<XExpr>> {
+pub(crate) fn typed_args(table: &FunctionTable, opcode: u16, b: &[u8]) -> Option<Vec<XExpr>> {
     let mut r = Rd::new(b);
     let n = r.u16()? as usize;
     let mut out = Vec::with_capacity(n);

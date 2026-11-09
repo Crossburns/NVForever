@@ -194,6 +194,37 @@ pub fn weekday(year: i64, month: i64, day: i64) -> i64 {
     (day_number(year, month, day) - day_number(2281, 10, 13)).rem_euclid(7)
 }
 
+/// `Sin`, `Cos`, `Tan` (0x121C-0x121E, the base game's own commands, not the extender's
+/// [observed: the original's command table; xNVSE's DumpDocs has no such command]): the
+/// angle in degrees [observed: `Sin 90 > 0.5` reads 1 in the original]; with the optional
+/// arc flag the inverse, in degrees [documented: Sin, Cos, Tan].
+fn trig(a: &Args, f: fn(f64) -> f64, inv: fn(f64) -> f64) -> Result<Value, String> {
+    let x = a.num(0)?;
+    let arc = a.num(1).unwrap_or(0.0) != 0.0;
+    Ok(Value::Num(if arc { inv(x).to_degrees() } else { f(x.to_radians()) }))
+}
+
+pub fn sin(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    trig(a, f64::sin, f64::asin)
+}
+
+pub fn cos(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    trig(a, f64::cos, f64::acos)
+}
+
+pub fn tan(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    trig(a, f64::tan, f64::atan)
+}
+
+/// `Log x [base]` (0x1220): the natural logarithm, or in the base given [documented: Log].
+pub fn log(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    let x = a.num(0)?;
+    Ok(Value::Num(match a.num(1) {
+        Ok(b) if b > 0.0 && b != 1.0 => x.ln() / b.ln(),
+        _ => x.ln(),
+    }))
+}
+
 pub fn sqrt(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     Ok(Value::Num(a.num(0)?.max(0.0).sqrt()))
 }

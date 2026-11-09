@@ -212,6 +212,133 @@ def merge(table, catalogue):
     return added
 
 
+WIKIDOCS_FORMAT = "nvf.ext.wikidocs/1"
+
+# Base-game commands kept without their opcode: NVForever runs them from its console
+# (functions::console), not as script functions.
+KEEP_UNNUMBERED = {"killallactors"}
+
+# A base-game parameter type as DumpCommandWikiDocs names it -> its bytecode encoding
+# (crates/fnv-script/data/encodings.json): the types whose values are not tagged.
+VANILLA_ENCODINGS = {
+    "String": "string",
+    "ActorValue": "enum:actor_value",
+    "Axis": "axis",
+    "AnimationGroup": "enum:anim_group",
+    "Sex": "enum:sex",
+    "MiscStat": "enum:misc_stat",
+    "CriticalStage": "enum:critical_stage",
+}
+
+
+def parse_wikidocs(text, first):
+    """`DumpCommandWikiDocs <first> <last>` output: one `{{Function …}}` block per
+    command, in opcode order from `first` [observed: 485 catalogue opcodes agree with the
+    position, none disagree]."""
+    out = []
+    for block in re.findall(r"\{\{Function\n(.*?)\n\}\}\n\[\[Category", text, re.S):
+        def field(k):
+            m = re.search(r"^ \|" + re.escape(k) + r" = (.*)$", block, re.M)
+            return m.group(1).strip() if m else None
+        args = []
+        for a in re.findall(r"\{\{FunctionArgument\n(.*?)\n  \}\}", block, re.S):
+            args.append({k: v.strip() for k, v in re.findall(r"\|(\w+) = (.*)", a)})
+        out.append({"name": field("name"), "alias": field("alias"), "returnType": field("returnType"),
+                    "referenceType": field("referenceType"), "conditionFunc": field("conditionFunc"), "args": args})
+    for i, c in enumerate(out):
+        c["opcode"] = f"0x{first + i:04X}"
+    return out
+
+
+def vanilla(table, catalogue, encodings):
+    """The base game's commands (a parsed DumpCommandWikiDocs table): opcodes for rows
+    that lack them, the game's alias where no row has it, new rows for commands the
+    catalogue lacks, and the encodings of their non-tagged parameters. Returns counts."""
+    rows = catalogue["functions"]
+    idx = {}
+    for f in rows:
+        idx.setdefault(f["name"].lower(), f)
+        for a in f.get("aliases") or []:
+            idx.setdefault(a.lower(), f)
+    taken = {o.upper() for f in rows for o in f.get("opcodes") or []}
+    n = {"opcodes": 0, "aliases": 0, "rows": 0, "encodings": 0}
+    for c in table["commands"]:
+        name, op = c["name"], c["opcode"]
+        if not name or name.lower().startswith("unusedfunction") or op.upper() in taken and not idx.get(name.lower()):
+            continue
+        f = idx.get(name.lower()) or (c["alias"] and idx.get(c["alias"].lower()))
+        evidence = "observed: DumpCommandWikiDocs"
+        if f is None:
+            params = []
+            for a in c["args"]:
+                pname = a.get("Name", "")
+                optional = "(optional)" in pname.lower()
+                pname = re.sub(r"\s*\((?i:optional)\)", "", pname).strip()
+                if pname.startswith("[Enter"):
+                    pname = ""
+                ty = a.get("Type", "")
+                q = {"name": pname or ty.lower(), "type": ty, "kind": kind_of(ty)}
+                if optional:
+                    q["optional"] = True
+                params.append(q)
+            f = {"name": name, "origin": "GECK1", "params": params, "family": "vanilla",
+                 "opcodes": [op], "opcode_evidence": evidence}
+            if c["referenceType"] and c["referenceType"] != "none":
+                f["calling_reference"] = "reference"
+            if c["alias"]:
+                f["aliases"] = [c["alias"]]
+            rows.append(f)
+            idx[name.lower()] = f
+            n["rows"] += 1
+        elif not f.get("opcodes") and "Console Functions" in (f.get("categories") or []):
+            # A console command NVForever runs from its console by name (functions::console);
+            # so is KillAllActors, kept without its opcode by hand.
+            continue
+        elif not f.get("opcodes") and (f.get("family") != "vanilla" or f["name"].lower() in KEEP_UNNUMBERED):
+            # An extender's command of the same name wins in the original (Sin, Cos, …
+            # degrees, not the base game's) [observed: the compile tests' probes]; and
+            # the commands NVForever runs from its console by name.
+            continue
+        elif not f.get("opcodes") and op.upper() in taken:
+            # Another row has the opcode (SwapTexture for SwapTextureOnRef).
+            continue
+        elif not f.get("opcodes"):
+            f["opcodes"] = [op]
+            f["opcode_evidence"] = evidence
+            n["opcodes"] += 1
+        if c["alias"] and c["alias"].lower() not in idx and len(c["alias"]) > 1:
+            f.setdefault("aliases", []).append(c["alias"])
+            idx[c["alias"].lower()] = f
+            n["aliases"] += 1
+        taken.add(op.upper())
+        encs = [VANILLA_ENCODINGS.get(a.get("Type", ""), "value") for a in c["args"]]
+        key = op
+        if any(e != "value" for e in encs) and key not in encodings["functions"] and key.lower() not in {k.lower() for k in encodings["functions"]}:
+            encodings["functions"][key] = {"name": name, "params": encs, "evidence": evidence}
+            n["encodings"] += 1
+    if any(n.values()):
+        catalogue.setdefault("sources", {})["dumpcommandwikidocs"] = (
+            "xNVSE DumpCommandWikiDocs 4096 5119 in the original game: the base game's commands in "
+            "opcode order (name, alias, parameter types); opcodes of rows that had none and rows "
+            "the wiki lacks (tools/capture/command_table.py vanilla)")
+    return n
+
+
+def write_encodings(path, encodings):
+    """encodings.json with its `functions` block rewritten one function a line in opcode
+    order, the rest of the file as it was."""
+    with open(path, encoding="utf-8", newline="") as f:
+        text = f.read()
+    nl = "\r\n" if "\r\n" in text else "\n"
+    start = text.index('"functions": {')
+    end = text.index(nl + "  }", start)
+    lines = [f'    "{k}": ' + json.dumps(v, ensure_ascii=False) for k, v in sorted(encodings["functions"].items(), key=lambda kv: int(kv[0], 16))]
+    text = text[:start] + '"functions": {' + nl + ("," + nl).join(lines) + text[end:]
+    json.loads(text)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def opcodes(table):
     """Opcode -> command name, every command the table has (fnv.script.opcode_names/1)."""
     names = {}
@@ -237,10 +364,30 @@ def main(argv=None):
     m.add_argument("table")
     m.add_argument("--functions", default="schemas/script/functions.json")
     m.add_argument("--check", action="store_true")
+    v = sub.add_parser("vanilla", help="merge the base game's commands from DumpCommandWikiDocs output")
+    v.add_argument("log", help="nvse.log holding DumpCommandWikiDocs output")
+    v.add_argument("--first", default="0x1000", help="the first opcode the dump was asked for")
+    v.add_argument("--functions", default="schemas/script/functions.json")
+    v.add_argument("--encodings", default="crates/fnv-script/data/encodings.json")
+    v.add_argument("--check", action="store_true")
     o = sub.add_parser("opcodes")
     o.add_argument("table")
     o.add_argument("-o", "--output", default="schemas/script/opcode_names.json")
     a = ap.parse_args(argv)
+    if a.cmd == "vanilla":
+        with open(a.log, encoding="utf-8", errors="replace") as f:
+            table = {"commands": parse_wikidocs(f.read(), int(a.first, 0))}
+        with open(a.functions, encoding="utf-8") as f:
+            catalogue = json.load(f)
+        with open(a.encodings, encoding="utf-8") as f:
+            encodings = json.load(f)
+        n = vanilla(table, catalogue, encodings)
+        print(f"{len(table['commands'])} commands: " + ", ".join(f"{k} {v}" for k, v in n.items()))
+        if not a.check:
+            with open(a.functions, "w", encoding="utf-8", newline="\n") as f:
+                f.write(render_json(catalogue))
+            write_encodings(a.encodings, encodings)
+        return 0
     if a.cmd == "opcodes":
         with open(a.table, encoding="utf-8") as f:
             doc = opcodes(json.load(f))

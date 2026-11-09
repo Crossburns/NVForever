@@ -151,6 +151,14 @@ pub struct FunctionTable {
     by_name: HashMap<String, u16>,
 }
 
+/// An extender function's parameter that takes an animation group: the catalogue's type
+/// `AnimationGroup`, or a parameter named "anim group" / "animGroup" [observed: their
+/// compiled calls store the group's u16 code, ext-bytecode.md §5].
+pub fn is_anim_group(p: &Param) -> bool {
+    let squash = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+    p.wiki_type.as_deref().is_some_and(|t| squash(t) == "animationgroup") || matches!(squash(&p.name).as_str(), "animgroup" | "animationgroup")
+}
+
 fn parse_hex16(s: &str) -> Option<u16> {
     u16::from_str_radix(s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s), 16).ok()
 }

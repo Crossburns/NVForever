@@ -54,6 +54,8 @@ pub enum Kw {
     /// `if eval <expression>` / `elseif eval …` [documented: Eval].
     IfEval(Vec<XTok>),
     ElseIfEval(Vec<XTok>),
+    /// `eval <expression>` as a statement.
+    Eval(Vec<XTok>),
     /// `while <condition>` [documented: While].
     While(Vec<XTok>),
     /// `foreach <var> <- <source>` [documented: ForEach]: the tokens after `foreach`.
@@ -70,8 +72,10 @@ pub enum Kw {
 /// The assignments the Let macro takes without `let`: `=`, `+=`, `-=`, `*=` [documented:
 /// Let Macro]; `/=` [observed: a High and Dry plugin's `x /= 700` with no `let`, compiled
 /// by the GECK to a Let (0x1539) ending in operator 0x1e, ext-syntax.md §4]; `|=`
-/// [hypothesis: a High and Dry Script Runner file uses it so; no capture yet].
-const MACRO_OPS: [&str; 6] = ["=", "+=", "-=", "*=", "/=", "|="];
+/// [hypothesis: a High and Dry Script Runner file uses it so; no capture yet]; `:=`
+/// [observed: Famine.esp `bNoEdit:= 1`, ICE.esp, Party Banter 2.esm, JBTImproved.esp
+/// compiled so in the GECK with xNVSE, their bytes a Let].
+const MACRO_OPS: [&str; 7] = ["=", "+=", "-=", "*=", "/=", "|=", ":="];
 
 /// A line of the extender's grammar, by its first words.
 fn extender(l: &Line) -> Option<Kw> {
@@ -80,6 +84,9 @@ fn extender(l: &Line) -> Option<Kw> {
     match (head.as_str(), second.as_deref()) {
         ("let", _) => Some(Kw::Let(xtokens(&l.text)[1..].to_vec())),
         ("if", Some("eval")) => Some(Kw::IfEval(xtokens(&l.text)[2..].to_vec())),
+        // `eval <expression>` as a statement, run for what it does (`eval x && (y = 1)`)
+        // [documented: Eval; observed: High and Dry's Script Runner files].
+        ("eval", Some(_)) => Some(Kw::Eval(xtokens(&l.text)[1..].to_vec())),
         ("elseif", Some("eval")) => Some(Kw::ElseIfEval(xtokens(&l.text)[2..].to_vec())),
         ("while", _) => Some(Kw::While(xtokens(&l.text)[1..].to_vec())),
         ("foreach", _) => Some(Kw::ForEach(xtokens(&l.text)[1..].to_vec())),
@@ -103,6 +110,10 @@ fn extender(l: &Line) -> Option<Kw> {
                         break;
                     }
                     XKind::Word if depth == 0 && i == 0 => {}
+                    // A quest's variable (`JBT.iLastHitPart := …`) [observed:
+                    // JBTImproved.esp compiles so in the GECK with xNVSE].
+                    XKind::Op if depth == 0 && i == 1 && t.text == "." => {}
+                    XKind::Word if depth == 0 && i == 2 && x[1].text == "." => {}
                     _ if depth > 0 => {}
                     _ => break,
                 }
@@ -127,7 +138,7 @@ impl Kw {
     /// The extender tokens of a `let`, `if eval`, `elseif eval`, `while` or `foreach` line.
     fn xtoks_mut(&mut self) -> Option<&mut Vec<XTok>> {
         match self {
-            Kw::Let(t) | Kw::IfEval(t) | Kw::ElseIfEval(t) | Kw::While(t) | Kw::ForEach(t) => Some(t),
+            Kw::Let(t) | Kw::IfEval(t) | Kw::ElseIfEval(t) | Kw::Eval(t) | Kw::While(t) | Kw::ForEach(t) => Some(t),
             _ => None,
         }
     }
@@ -136,7 +147,7 @@ impl Kw {
     /// script-compiler.md §8).
     pub fn extended(&self) -> bool {
         match self {
-            Kw::Let(_) | Kw::IfEval(_) | Kw::ElseIfEval(_) | Kw::While(_) | Kw::ForEach(_) | Kw::Loop | Kw::Break | Kw::Continue | Kw::Label(_) | Kw::GoTo(_) => true,
+            Kw::Let(_) | Kw::IfEval(_) | Kw::ElseIfEval(_) | Kw::Eval(_) | Kw::While(_) | Kw::ForEach(_) | Kw::Loop | Kw::Break | Kw::Continue | Kw::Label(_) | Kw::GoTo(_) => true,
             Kw::Decl { ty, init, .. } => matches!(ty, DeclType::String | DeclType::Array) || init.is_some(),
             // `Begin _GameMode`: a compiler-override block [documented: Script Compiler Override].
             Kw::Begin { block, .. } => block.starts_with('_') || block.eq_ignore_ascii_case("function"),

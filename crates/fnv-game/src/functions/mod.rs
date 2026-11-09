@@ -449,6 +449,9 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x1228, "SetMinimalUse", Impl(objects::set_minimal_use)),
             (0x1212, "SetCriticalStage", Impl(objects::set_critical_stage)),
             (0x1213, "IsInCriticalStage", Impl(objects::is_in_critical_stage)),
+            (0x1206, "GetVATSRightAreaFree", Impl(objects::get_vats_right_area_free)),
+            (0x114E, "SetShowQuestItems", Impl(items::set_show_quest_items)),
+            (0x1207, "GetVATSLeftAreaFree", Impl(objects::get_vats_left_area_free)),
             (0x11D5, "SetBroadcastState", Impl(objects::set_broadcast_state)),
             (0x11D4, "GetBroadcastState", Impl(crate::radio::get_broadcast_state)),
             (0x1171, "SetTalkingActivatorActor", Impl(objects::set_talking_activator_actor)),
@@ -518,6 +521,10 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             // Time and numbers.
             (0x10AA, "GetDayOfWeek", Impl(misc::get_day_of_week)),
             (0x121F, "Sqrt", Impl(misc::sqrt)),
+            (0x121C, "Sin", Impl(misc::sin)),
+            (0x121D, "Cos", Impl(misc::cos)),
+            (0x121E, "Tan", Impl(misc::tan)),
+            (0x1220, "Log", Impl(misc::log)),
             (0x120C, "IsWin32", Impl(misc::one)),
             // Gore is on, the game's default [decision].
             (0x1226, "IsGoreDisabled", Impl(misc::zero)),

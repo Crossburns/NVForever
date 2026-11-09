@@ -138,8 +138,11 @@ or the engine's own words `console::ENGINE_WORDS`: `coc`, `cow`, `coe`, `help`,
 `AdvLevel`, `bat`) and that no
 master script calls are counted by `console::unhandled_unused`. The test
 `registered_names_are_catalogue_console_commands` pins the two numbers: **33** in the
-wiki's "Console Functions" category, **96** others. Implementing one lowers a number
-there; a catalogue update that adds one raises it. Sorted (2026-10-31):
+wiki's "Console Functions" category, **168** others. Implementing one lowers a number
+there; a catalogue update that adds one raises it. Sorted (2026-10-31); the 77 base-game
+commands the catalogue gained from the original's own command table on 2026-11-09
+(`tools/capture/command_table.py vanilla`, mostly debug and editor commands no script
+calls) are not sorted yet:
 
 **Console functions players use**: all built (`cow`, `coe`, `saq`, `rdf`, `rat`, `zap`,
 `slpm`, `bat`, `tfow`, `temo`, `tlik`, `MFG`, `plm`, `clm`, `s1st`, `SetVel`; in the

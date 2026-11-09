@@ -927,7 +927,7 @@ impl<'a> Gen<'a> {
         // GECK's "Mismatched quotes", ext-bytecode.md §7]; a vanilla line's unclosed string
         // runs to the end of the line.
         let x_line = self.co
-            || matches!(kw, Kw::Let(_) | Kw::IfEval(_) | Kw::ElseIfEval(_) | Kw::While(_) | Kw::ForEach(_))
+            || matches!(kw, Kw::Let(_) | Kw::IfEval(_) | Kw::ElseIfEval(_) | Kw::Eval(_) | Kw::While(_) | Kw::ForEach(_))
             || matches!(kw, Kw::Call(toks) if self.extended && (self.function(&toks[0]).is_none() || toks.iter().any(|t| t.kind == lex::Kind::Open)));
         if x_line && lex::unclosed_quote(&self.text) {
             self.diag("mismatched_quotes", true, self.text.clone());
@@ -1108,6 +1108,11 @@ impl<'a> Gen<'a> {
                     return;
                 }
                 self.emit(None, if matches!(kw, Kw::Break) { op::X_BREAK } else { op::X_CONTINUE }, &[]);
+            }
+            Kw::Eval(toks) => {
+                let Some(e) = self.xwhole(toks) else { return };
+                let json = serde_json::to_vec(&e).unwrap_or_default();
+                self.emit(None, op::X_EVAL, &json);
             }
             Kw::Let(toks) => {
                 let Some(e) = self.xwhole(toks) else { return };

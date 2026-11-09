@@ -456,3 +456,32 @@ pub fn set_talking_activator_actor(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<
 pub fn place_leveled_actor_at_me(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     place_at_me(g, ctx, &Args(&a.0[..1.min(a.len())]))
 }
+
+/// How far a sideways cast for GetVATSLeftAreaFree / GetVATSRightAreaFree reaches, and the
+/// answer when it meets nothing [hypothesis: mods compare it with the over-shoulder
+/// camera's offset (fOverShoulderPosX, tens of units), so any length past that serves].
+const AREA_FREE_REACH: f32 = 300.0;
+
+/// `GetVATSLeftAreaFree` / `GetVATSRightAreaFree` on an actor: the free distance beside it
+/// at shoulder height, up to [`AREA_FREE_REACH`] [hypothesis: the names, and how Enhanced
+/// Movement and 3rd Person Aim Fix clamp the over-shoulder camera with them; the engine's
+/// physics answers the cast (`crate::ray`); headless nothing is hit].
+fn area_free(g: &mut Game, ctx: &Ctx, right: bool) -> Result<Value, String> {
+    let r = ctx.subject()?;
+    let Some((pos, rot)) = g.ref_pos_rot(r) else { return Ok(Value::Num(f64::from(AREA_FREE_REACH))) };
+    // Heading clockwise from north (+Y): forward (sin h, cos h), right (cos h, -sin h).
+    let (s, c) = rot[2].sin_cos();
+    let side = if right { [c, -s] } else { [-c, s] };
+    let from = [pos[0], pos[1], pos[2] + 64.0];
+    let to = [from[0] + side[0] * AREA_FREE_REACH, from[1] + side[1] * AREA_FREE_REACH, from[2]];
+    let d = crate::ray::cast(from, to, crate::ray::CastKind::World).unwrap_or(AREA_FREE_REACH);
+    Ok(Value::Num(f64::from(d)))
+}
+
+pub fn get_vats_left_area_free(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
+    area_free(g, ctx, false)
+}
+
+pub fn get_vats_right_area_free(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
+    area_free(g, ctx, true)
+}

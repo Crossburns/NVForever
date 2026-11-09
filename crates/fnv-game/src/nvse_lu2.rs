@@ -222,8 +222,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // SetShowQuestItems' switch, on by default [documented: GetShowQuestItems;
         // SetShowQuestItems, "Shows (1, default)"].
         "getshowquestitems" => yes(g.player.show_quest_items.unwrap_or(true)),
-        // A script's SetShowQuestItems by name (source run as text; the catalogue row has
-        // no opcode), as `functions::items::set_show_quest_items`.
+        // A script's SetShowQuestItems by name, as the base game's 0x114E
+        // (`functions::items::set_show_quest_items`).
         "setshowquestitems" => {
             g.player.show_quest_items = Some(num(args, 0, 1.0) != 0.0);
             zero
