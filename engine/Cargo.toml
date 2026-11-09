@@ -2,7 +2,7 @@
 # compile Bevy (docs/adr/0001-bevy-viewer.md, docs/design/layer3.md §2.2).
 [workspace]
 resolver = "2"
-members = ["nvf-assets", "nvf-play", "nvf-viewer", "nvforever"]
+members = ["nvf-assets", "nvf-play", "nvf-remix", "nvf-viewer", "nvforever"]
 exclude = ["vendor/wgpu-ffx", "vendor/wgpu-ffx/wgpu-ffx", "vendor/wgpu-ffx/wgpu-ffx-shaders-spv"]
 
 [workspace.package]

@@ -1,0 +1,13 @@
+[package]
+name = "nvf-remix"
+description = "NVForever's RTX Remix renderer: the Remix C API (remix_c.h) loaded in-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+libloading = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }

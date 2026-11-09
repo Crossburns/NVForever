@@ -4599,6 +4599,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nvf-remix"
+version = "0.6.0"
+dependencies = [
+ "libloading",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "nvf-viewer"
 version = "0.6.0"
 dependencies = [
