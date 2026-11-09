@@ -13,7 +13,7 @@
 //!   (`rtx-remix\mods`) apply; the axis options are set for Bevy's space (Y up,
 //!   right-handed) after it.
 
-use bevy::asset::AssetEventSystems;
+use bevy::asset::{AssetEventSystems, UntypedAssetId};
 use bevy::camera::Projection;
 use bevy::mesh::{Indices, VertexAttributeValues};
 use bevy::prelude::*;
@@ -78,9 +78,9 @@ struct RemixState {
     child: nvf_remix::window::Child,
     textures: HashSet<u64>,
     failed_textures: HashSet<u64>,
-    material_wait: HashMap<AssetId<NifMaterial>, u64>,
-    materials: HashMap<AssetId<NifMaterial>, ffi::MaterialHandle>,
-    meshes: HashMap<(AssetId<Mesh>, AssetId<NifMaterial>), ffi::MeshHandle>,
+    material_wait: HashMap<UntypedAssetId, u64>,
+    materials: HashMap<UntypedAssetId, ffi::MaterialHandle>,
+    meshes: HashMap<(AssetId<Mesh>, UntypedAssetId), ffi::MeshHandle>,
     lights: HashMap<Entity, (u64, ffi::LightHandle)>,
     frames: u64,
     errors: u64,
@@ -217,15 +217,65 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<
 }
 
 type CameraParts = (&'static Camera, &'static GlobalTransform, &'static Projection, Option<&'static RenderLayers>, Has<nvf_play::PlayerCamera>);
-type ShapeParts = (
+type ShapeParts<M> = (
     Entity,
     &'static Mesh3d,
-    &'static MeshMaterial3d<NifMaterial>,
+    &'static MeshMaterial3d<M>,
     &'static GlobalTransform,
     &'static ViewVisibility,
     Option<&'static bevy::mesh::skinning::SkinnedMesh>,
     Option<&'static RenderLayers>,
 );
+
+/// The shapes of every material type built on Bevy's standard material: the NIF
+/// material (statics, actors, terrain) and the trees', grass's and billboards' own.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Shapes<'w, 's> {
+    nif: Query<'w, 's, ShapeParts<NifMaterial>>,
+    nif_m: Res<'w, Assets<NifMaterial>>,
+    leaf: Query<'w, 's, ShapeParts<crate::tree::LeafMaterial>>,
+    leaf_m: Res<'w, Assets<crate::tree::LeafMaterial>>,
+    bark: Query<'w, 's, ShapeParts<crate::tree::BarkMaterial>>,
+    bark_m: Res<'w, Assets<crate::tree::BarkMaterial>>,
+    bill: Query<'w, 's, ShapeParts<crate::tree::BillboardMaterial>>,
+    bill_m: Res<'w, Assets<crate::tree::BillboardMaterial>>,
+    grass: Query<'w, 's, ShapeParts<crate::grass::GrassMaterial>>,
+    grass_m: Res<'w, Assets<crate::grass::GrassMaterial>>,
+}
+
+/// One shape, whatever its material type.
+struct ShapeIn<'a> {
+    entity: Entity,
+    mesh: AssetId<Mesh>,
+    mat: UntypedAssetId,
+    base: &'a StandardMaterial,
+    gt: &'a GlobalTransform,
+    vis: bool,
+    skinned: Option<&'a bevy::mesh::skinning::SkinnedMesh>,
+    layers: Option<&'a RenderLayers>,
+}
+
+impl<'w, 's> Shapes<'w, 's> {
+    fn all(&self) -> Vec<ShapeIn<'_>> {
+        fn take<'a, E: bevy::pbr::MaterialExtension>(
+            q: &'a Query<ShapeParts<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>>,
+            m: &'a Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>,
+            out: &mut Vec<ShapeIn<'a>>,
+        ) {
+            for (entity, mesh, mat, gt, vis, skinned, layers) in q {
+                let Some(material) = m.get(mat.id()) else { continue };
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), skinned, layers });
+            }
+        }
+        let mut out = Vec::new();
+        take(&self.nif, &self.nif_m, &mut out);
+        take(&self.leaf, &self.leaf_m, &mut out);
+        take(&self.bark, &self.bark_m, &mut out);
+        take(&self.bill, &self.bill_m, &mut out);
+        take(&self.grass, &self.grass_m, &mut out);
+        out
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn frame(
@@ -236,11 +286,10 @@ fn frame(
     cameras: Query<CameraParts, With<Camera3d>>,
     body: Option<Res<crate::player_body::PlayerBody>>,
     children: Query<&Children>,
-    shapes: Query<ShapeParts>,
+    shapes: Shapes,
     joints: Query<&GlobalTransform>,
     ui: Option<Res<UiOverlay>>,
     bindposes: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
-    materials: Res<Assets<NifMaterial>>,
     meshes_all: Res<Assets<Mesh>>,
     points: Query<(Entity, &PointLight, &GlobalTransform, &InheritedVisibility)>,
     suns: Query<(Entity, &DirectionalLight, &GlobalTransform)>,
@@ -342,7 +391,7 @@ fn frame(
         }
     }
     let mut own = 0u32;
-    for (entity, mesh, mat, gt, vis, skinned, layers) in &shapes {
+    for ShapeIn { entity, mesh, mat, base, gt, vis, skinned, layers } in shapes.all() {
         let layers = layers.cloned().unwrap_or_default();
         // In first person, also anything at the eye that is not the first-person arms
         // rig (the face's parts the rig's lists miss) [design: the camera sits inside the
@@ -376,7 +425,7 @@ fn frame(
             }
             player
         } else {
-            if !vis.get() {
+            if !vis {
                 continue;
             }
             0
@@ -384,28 +433,24 @@ fn frame(
         why[0] += 1;
         // Additive shapes (light shafts, glows) are no surfaces to the path tracer
         // [design: they would trace as lit sheets; their light comes from the lights].
-        if materials.get(mat.id()).is_some_and(|m| matches!(m.base.alpha_mode, AlphaMode::Add)) {
+        if matches!(base.alpha_mode, AlphaMode::Add) {
             continue;
         }
-        let key = (mesh.id(), mat.id());
+        let key = (mesh, mat);
         let handle = match st.meshes.get(&key) {
             Some(h) => *h,
             None => {
-                let Some(data) = cpu.by_id.get(&mesh.id()).cloned() else {
+                let Some(data) = cpu.by_id.get(&mesh).cloned() else {
                     why[1] += 1;
                     if why[1] <= 3 && st.frames % 600 == 0 {
-                        if let Some(m) = meshes_all.get(mesh.id()) {
+                        if let Some(m) = meshes_all.get(mesh) {
                             let names: Vec<&str> = m.try_attributes().map(|a| a.map(|(a, _)| a.name).collect()).unwrap_or_default();
                             info!("remix: no CPU copy of a mesh: topology {:?}, attributes {:?}", m.primitive_topology(), names);
                         }
                     }
                     continue;
                 };
-                let Some(m) = materials.get(mat.id()) else {
-                    why[2] += 1;
-                    continue;
-                };
-                let Some(rm) = material(st, mat.id(), m) else {
+                let Some(rm) = material(st, mat, base) else {
                     why[3] += 1;
                     continue;
                 };
@@ -422,14 +467,14 @@ fn frame(
                 }
             }
         };
-        let two_sided = materials.get(mat.id()).is_some_and(|m| m.base.double_sided || m.base.cull_mode.is_none());
+        let two_sided = base.double_sided || base.cull_mode.is_none();
         // A skinned mesh: posed by its joints (joint × inverse bind pose, world space, as
         // Bevy skins it) taken into the instance's space, the instance where its entity is
         // [observed: Remix finds the player's body by its instance's position, so an
         // instance left at the origin had its parts made scenery].
         let to_instance = gt.to_matrix().inverse();
         let bones: Vec<ffi::Transform> = match skinned.and_then(|s| bindposes.get(&s.inverse_bindposes).map(|b| (s, b))) {
-            Some((s, inv)) if cpu.by_id.get(&mesh.id()).is_some_and(|d| d.skin.is_some()) => s
+            Some((s, inv)) if cpu.by_id.get(&mesh).is_some_and(|d| d.skin.is_some()) => s
                 .joints
                 .iter()
                 .zip(inv.iter())
@@ -539,11 +584,10 @@ fn light(st: &mut RemixState, e: Entity, key: u64, make: impl FnOnce(&nvf_remix:
     }
 }
 
-fn material(st: &mut RemixState, id: AssetId<NifMaterial>, m: &NifMaterial) -> Option<ffi::MaterialHandle> {
+fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Option<ffi::MaterialHandle> {
     if let Some(h) = st.materials.get(&id) {
         return Some(*h);
     }
-    let b = &m.base;
     // Not yet: a texture the material names has not arrived (images load after the
     // material); made once every one is uploaded or known to fail.
     let first = *st.material_wait.entry(id).or_insert(st.frames);
