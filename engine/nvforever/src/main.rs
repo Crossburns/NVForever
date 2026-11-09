@@ -1493,7 +1493,14 @@ fn main() -> AppExit {
         app.insert_resource(nvf_play::script::NoMessages);
     }
     #[cfg(windows)]
-    if let Some(dll) = args.remix.clone() {
+    // `--remix`, else `[Render] Remix=<Remix install>\trex\d3d9.dll` of NVForever.ini
+    // (docs/design/remix.md).
+    let remix_dll = args.remix.clone().or_else(|| {
+        let ini = fnv_install::EngineHome::user()?.config_file();
+        let text = std::fs::read_to_string(ini).ok()?;
+        fnv_install::ini_get(&text, "Render", "Remix").map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_file())
+    });
+    if let Some(dll) = remix_dll {
         app.add_plugins(remix::RemixPlugin(remix::RemixConfig { dll }));
     }
     app.insert_resource(nvf_play::voice::VoiceSettings { play: !args.no_voice, volume: args.voice_volume, ..Default::default() });
