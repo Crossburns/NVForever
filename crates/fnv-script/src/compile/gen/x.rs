@@ -211,7 +211,8 @@ impl Gen<'_> {
                 break;
             }
             let Some((lb, rb, op)) = infix(t) else { break };
-            if lb < min {
+            let pair = self.aware_arg && matches!(op, Infix::Bin(XOp::Pair | XOp::Slice));
+            if lb < min && !pair {
                 break;
             }
             p.next();
@@ -251,9 +252,11 @@ impl Gen<'_> {
                 }
                 let was = std::mem::replace(&mut self.in_args, false);
                 let was_paren = std::mem::replace(&mut self.in_paren, true);
+                let was_aware = std::mem::replace(&mut self.aware_arg, false);
                 let e = self.xexpr(p, 0);
                 self.in_args = was;
                 self.in_paren = was_paren;
+                self.aware_arg = was_aware;
                 let e = e?;
                 if p.next().map(|c| c.kind) != Some(XKind::Close) {
                     return self.xerr("syntax", "missing )");
@@ -527,7 +530,15 @@ impl Gen<'_> {
                 None if self.axis_param(f, args.len()) => ParamEnc::Axis,
                 None => ParamEnc::Value,
             };
-            let min = if f.aware {
+            // An NVSE-aware function inside an expression (a `let`, an `if eval`, an
+            // argument, parentheses) takes arithmetic into its argument but stops at a
+            // comparison: `Ar_Find sKey aList == Ar_BadNumericIndex` compares the call's
+            // result, with or without parentheses round the arguments [observed:
+            // argscope2 in the original with xNVSE 6.4.9, absent 1, present 0]. A line that
+            // is the call alone keeps everything but the assignments.
+            let min = if f.aware && (self.in_args || self.in_paren || !self.call_line) {
+                ARG_IN_OVERRIDE
+            } else if f.aware {
                 ARG_OVERRIDE
             } else if self.co {
                 ARG_IN_OVERRIDE
@@ -536,9 +547,11 @@ impl Gen<'_> {
             };
             let was = std::mem::replace(&mut self.in_args, true);
             let was_any = std::mem::replace(&mut self.in_arg_any, true);
+            let was_aware = std::mem::replace(&mut self.aware_arg, min == ARG_IN_OVERRIDE && f.aware);
             let a = self.xarg(p, &enc, min);
             self.in_args = was;
             self.in_arg_any = was_any;
+            self.aware_arg = was_aware;
             args.push(a?);
         }
         Some(args)

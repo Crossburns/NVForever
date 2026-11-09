@@ -1187,3 +1187,11 @@ fn this_is_get_self() {
     assert_eq!(l, ["(v1 Set= 10CE())", "(v2 Set= 10CE().100E(#1))"]);
 }
 
+
+#[test]
+fn an_aware_functions_argument_ends_at_a_comparison() {
+    // [observed: argscope2 in the original: `Ar_Find sKey aList == Ar_BadNumericIndex` is 1
+    // for a key not in the list, with or without parentheses round the arguments.]
+    assert_eq!(lets("array_var a\nfloat f\nbegin GameMode\nlet f := Ar_Find 1 a == 5\nend"), ["(v2 Set= (Ar_Find(1 v1) Eq 5))"]);
+    assert_eq!(lets("array_var a\nfloat f\nstring_var s\nbegin GameMode\nlet f := Ar_Find (s) (a) == 2\nend"), ["(v2 Set= (Ar_Find(v3 v1) Eq 2))"]);
+}

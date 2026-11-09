@@ -124,6 +124,9 @@ pub(super) struct Gen<'a> {
     in_arg_any: bool,
     /// Inside parentheses: an expression, where a string variable is its value.
     in_paren: bool,
+    /// Reading an NVSE-aware function's argument inside an expression: `::` and `:` go on
+    /// in it though comparisons end it (`ar_Map "a"::1 "b"::2`; crate::compile::gen::x).
+    aware_arg: bool,
     /// Compiling a line that is a call on its own (not `let`, `if eval` or any other
     /// expression).
     call_line: bool,
@@ -205,6 +208,7 @@ impl<'a> Gen<'a> {
             co: false,
             in_args: false,
             in_arg_any: false,
+            aware_arg: false,
             in_paren: false,
             call_line: false,
             lambdas: Vec::new(),
