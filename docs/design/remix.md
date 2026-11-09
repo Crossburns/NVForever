@@ -53,7 +53,8 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   Remix's screen overlay (`DrawScreenOverlay`), over the traced image; the image follows
   the window's size. Menus with their own cameras draw into images instead (below).
 - **Water.** A translucent Remix material (refractive index 1.33) in the water type's
-  shallow colour's hue, absorbing over about 3000 units, drawn as animated water.
+  shallow colour's hue, absorbing over about 3000 units, drawn as animated water, with
+  the water's noise texture as its normal map (the waves).
 - **Screens.** An image Bevy renders into (the Pip-Boy's screen, a terminal's) is read
   back from the GPU each frame and replaced in place in Remix (the host-import
   extension's REPLACE flag); an unlit material (a screen) is sent as emissive with its
@@ -80,7 +81,7 @@ every 600 frames gives the build and Present times.
 
 ## Not yet
 
-- Water waves (the surface is flat), NVForever's sky meshes (Remix draws its own sky),
+- NVForever's sky meshes (Remix draws its own sky),
   particle systems as Remix particles (they go as meshes, made again as they change).
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.

@@ -656,7 +656,11 @@ fn frame(
                         let c = w.params.shallow;
                         let m = c.x.max(c.y).max(c.z).max(1e-3);
                         info!("remix: water {:?} shallow {:?}", key.1, c);
-                        match st.remix.create_translucent_material(hash_of(&key.1), [c.x / m, c.y / m, c.z / m], 3000.0, 1.33, None) {
+                        // The water's noise (its normal map) gives the surface its waves; Remix
+                        // moves it on animated water [documented: rtx_options.h
+                        // animatedWaterTextures, instance category ANIMATED_WATER].
+                        let waves = w.noise.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
+                        match st.remix.create_translucent_material(hash_of(&key.1), [c.x / m, c.y / m, c.z / m], 3000.0, 1.33, waves) {
                             Ok(h) => {
                                 st.materials.insert(key.1, h);
                                 h
