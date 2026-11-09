@@ -212,8 +212,12 @@ pub fn statement(l: &Line) -> Result<Statement, ParseError> {
     };
     // A call's inline expressions may declare (`Fn (float f)`); the code generator reads
     // the line again and drops the type word there.
-    let decls = match &kw {
+    let mut kw = kw;
+    let decls = match &mut kw {
         Kw::Call(_) if toks.iter().any(|t| t.kind == Kind::Open) => inline_decls(&mut xtokens(&l.text)),
+        // A declaration's value may declare more (`int n = ar_size (array_var a = …)`)
+        // [observed: ln_B42Interact.txt runs in the original].
+        Kw::Decl { init: Some(t), .. } => inline_decls(t),
         _ => Vec::new(),
     };
     Ok(Statement { line: l.no, kw, text: l.text.clone(), decls })
