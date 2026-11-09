@@ -220,7 +220,7 @@ const ARMS_SHADE_REACH: f32 = 256.0;
 /// Goodsprings against about 30 then; the arms' shadows are finer for it). Of those it
 /// draws only the ones by the eye toward the sun ([`near_shade_casters`]).
 #[derive(Component)]
-struct ArmsShade;
+pub(crate) struct ArmsShade;
 
 /// How far toward the sun from the eye the [`ArmsShade`] light's casters are looked for,
 /// and how far from that line they may lie (game units): the arms rig and its weapon reach

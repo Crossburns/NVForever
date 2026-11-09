@@ -93,7 +93,7 @@ const STARS_FADE: (f32, f32) = (0.0, -12.0);
 const MOON_FADE: (f32, f32) = (5.0, -6.0);
 /// How far south of the east-west line the sun's path runs, in radians (9°) [hypothesis,
 /// fitted to the original game's sun positions; fnv_world::sky::sun_direction].
-const SUN_SOUTH: f32 = 9.0 * PI / 180.0;
+pub(crate) const SUN_SOUTH: f32 = 9.0 * PI / 180.0;
 /// Elevation (radians) below which the directional light fades out towards the horizon.
 const HORIZON_FADE: f32 = 0.1;
 /// Game hours per real second at the default TimeScale of 30 [documented: GECK wiki

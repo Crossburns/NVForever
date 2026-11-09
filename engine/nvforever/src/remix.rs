@@ -100,6 +100,8 @@ struct RemixState {
     why: [u32; 4],
     shot_raised: bool,
     shot_taken: bool,
+    /// The sun's elevation and bearing last given to Remix's sky (degrees).
+    sky_sun: Option<(f32, f32)>,
     /// How many times each changed mesh was made again (in its Remix hash).
     mesh_gen: HashMap<AssetId<Mesh>, u32>,
     /// Changed meshes made again since the last stats line.
@@ -304,7 +306,10 @@ struct Shapes<'w, 's> {
 #[derive(bevy::ecs::system::SystemParam)]
 struct Lights<'w, 's> {
     points: Query<'w, 's, (Entity, &'static PointLight, &'static GlobalTransform, &'static InheritedVisibility)>,
-    suns: Query<'w, 's, (Entity, &'static DirectionalLight, &'static GlobalTransform)>,
+    // Not the arms' shade light: a Bevy stand-in that lights only the first-person arms
+    // for their shadows, at a constant strength (it lit the world as a second sun at
+    // night) [observed 2026-11-09].
+    suns: Query<'w, 's, (Entity, &'static DirectionalLight, &'static GlobalTransform), Without<crate::player_body::ArmsShade>>,
     sky: Option<Res<'w, crate::sky::SkyState>>,
     ambient: Res<'w, GlobalAmbientLight>,
 }
@@ -745,6 +750,28 @@ fn frame(
             seen.insert(e);
         }
     }
+    // Remix's sky (its atmosphere) places its sun by its own settings, fixed in rtx.conf:
+    // it showed a day sky at night. The game's sun, set there whenever it moves
+    // [observed 2026-11-09: 23:00 in Goodsprings under a blue sky]. Game space: x east,
+    // y north, z up; rotation as a compass bearing [hypothesis: the runtime's sunRotation
+    // is one].
+    if let Some(sky) = lights.sky.as_deref().filter(|s| s.interior.is_none()) {
+        let [x, y, z] = fnv_world::sky::sun_direction(&sky.climate, sky.hour, crate::sky::SUN_SOUTH);
+        let elevation = z.clamp(-1.0, 1.0).asin().to_degrees();
+        let rotation = x.atan2(y).to_degrees().rem_euclid(360.0);
+        let moved = st.sky_sun.is_none_or(|(e, r)| (e - elevation).abs() > 0.05 || (r - rotation).abs() > 0.05);
+        if moved {
+            for (k, v) in [("rtx.atmosphere.sunElevation", elevation), ("rtx.atmosphere.sunRotation", rotation)] {
+                if st.remix.set_config(k, &format!("{v:.3}")).is_err() {
+                    st.errors += 1;
+                }
+            }
+            if st.sky_sun.is_none() || st.frames % 600 == 1 {
+                info!("remix: sky sun at elevation {elevation:.1}, bearing {rotation:.1} (game hour {:.2})", sky.hour);
+            }
+            st.sky_sun = Some((elevation, rotation));
+        }
+    }
     let gone: Vec<Entity> = st.lights.keys().filter(|e| !seen.contains(e)).copied().collect();
     for e in gone {
         if let Some((_, h)) = st.lights.remove(&e) {
@@ -929,7 +956,8 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
     let mut remix = nvf_remix::Remix::load(&config.dll)?;
     remix.startup(child.hwnd.cast()).map_err(|e| e.to_string())?;
     // Bevy's space: Y up, right-handed [design: NVForever's scene].
-    for (k, v) in [("rtx.zUp", "False"), ("rtx.leftHandedCoordinateSystem", "False")] {
+    // The sky's own day cycle off: NVForever's clock places its sun (frame).
+    for (k, v) in [("rtx.zUp", "False"), ("rtx.leftHandedCoordinateSystem", "False"), ("rtx.atmosphere.timeCycleEnable", "False")] {
         if let Err(e) = remix.set_config(k, v) {
             warn!("remix: {k}: {e}");
         }
@@ -955,6 +983,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         why: [0; 4],
         shot_raised: false,
         shot_taken: false,
+        sky_sun: None,
         mesh_gen: HashMap::new(),
         remade: 0,
         fill_scale: scale("NVF_REMIX_FILL_SCALE", 20000.0),

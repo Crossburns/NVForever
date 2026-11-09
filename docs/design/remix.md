@@ -42,6 +42,12 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
 - **Changing meshes.** A mesh changed after Remix got it (particles, lip shapes,
   dismembered bodies) is made again under a new generation's hash; about 23 a frame in
   Goodsprings [observed 2026-11-09].
+- **Sky and night.** Remix's atmosphere places its sun by its own settings (fixed in
+  the install's rtx.conf), not by the lights it is given; NVForever sets
+  `rtx.atmosphere.sunElevation` and `sunRotation` from the game's sun
+  (`fnv_world::sky::sun_direction`) whenever it moves, with the sky's own day cycle
+  off, so the night has a night sky. The first-person arms' shade light is not sent
+  (it lights only the arms, at a constant strength).
 - **Terrain.** A land quadrant's base mesh and its blended layer meshes (same vertex
   grid, the layer's opacity in the vertex alpha) go as one mesh with Remix Plus's
   terrain-layers material: the base and the top seven layers, weighted per vertex as the
