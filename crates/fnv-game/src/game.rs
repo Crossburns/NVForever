@@ -5279,6 +5279,34 @@ impl<'a> Game<'a> {
         self.call_function(&ctx, &c.params).num()
     }
 
+    /// An extender opcode with no opcode handler, called by its registered name through the
+    /// extenders' dispatch (`crate::nvse::call`); `None` when it has no name or no handler.
+    fn extender_by_opcode(&mut self, ctx: &Ctx, args: &[ArgValue]) -> Option<Value> {
+        use fnv_script::vm::XVal;
+        if ctx.opcode < 0x1400 {
+            return None;
+        }
+        let name = self.data.table.opcode_names.get(&ctx.opcode)?.to_ascii_lowercase();
+        let xargs: Vec<XVal> = args
+            .iter()
+            .filter_map(|a| match a {
+                ArgValue::Value(v) => Some(XVal::from_value(*v)),
+                ArgValue::Enum(c) => Some(XVal::Num(f64::from(*c))),
+                ArgValue::Int32(i) => Some(XVal::Num(f64::from(*i))),
+                ArgValue::Str(s) => Some(XVal::Str(s.clone())),
+                ArgValue::Axis(c) => Some(XVal::Str(c.to_string())),
+                ArgValue::Vars(_) => None,
+            })
+            .collect();
+        let rc = RunCtx { self_ref: ctx.self_ref, action_ref: ctx.action_ref, quest: ctx.quest };
+        match crate::nvse::call(self, &rc, &name, ctx.on, &xargs)? {
+            Ok(XVal::Num(x)) => Some(Value::Num(x)),
+            Ok(XVal::Ref(r)) => Some(Value::Ref(r)),
+            Ok(_) => Some(Value::ZERO),
+            Err(_) => Some(Value::ZERO),
+        }
+    }
+
     /// Dispatch a function by opcode (scripts and conditions share it).
     pub fn call_function(&mut self, ctx: &Ctx, args: &[ArgValue]) -> Value {
         let data = self.data;
@@ -5297,7 +5325,13 @@ impl<'a> Game<'a> {
                 self.stub_note(ctx, args);
                 Value::ZERO
             }
+            // An extender's opcode (a condition, or compiled bytes) reaches its function by
+            // the name the original registers it under (fnv_script's opcode names): perk
+            // entry points and idles test IsSpellTargetAlt or IsPlayerSwimming every frame.
             None => {
+                if let Some(v) = self.extender_by_opcode(ctx, args) {
+                    return v;
+                }
                 *self.unhandled.entry(ctx.opcode).or_default() += 1;
                 if self.unhandled_seen.insert((ctx.opcode, ctx.unit.to_string())) {
                     let n = name();
