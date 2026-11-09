@@ -311,6 +311,8 @@ impl<'a> Gen<'a> {
         let saved = (std::mem::take(&mut self.out), self.stmts, std::mem::take(&mut self.chains), self.block.take(), self.loops, self.line, self.text.clone());
         self.stmts = 0;
         self.loops = 0;
+        // The body's statements stand on their own, not inside the argument the lambda is.
+        let flags = (std::mem::take(&mut self.in_args), std::mem::take(&mut self.in_paren), std::mem::take(&mut self.aware_arg), std::mem::take(&mut self.in_arg_any));
         let mut stmts = Vec::new();
         for l in &lines {
             match parse::statement(l) {
@@ -333,6 +335,7 @@ impl<'a> Gen<'a> {
         self.loops = saved.4;
         self.line = saved.5;
         self.text = saved.6;
+        (self.in_args, self.in_paren, self.aware_arg, self.in_arg_any) = flags;
         let body = crate::decode::decode(&bytes, self.table).program.top;
         let index = self.next_lambda();
         Some(crate::ir::XExpr::Lambda { params, body, value: None, index })

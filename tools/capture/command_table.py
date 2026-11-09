@@ -169,6 +169,27 @@ def extend(table, catalogue):
     return out
 
 
+def add_aliases(table, catalogue):
+    """Aliases the game registers that a catalogue row lacks (GPCDEx for
+    GetPlayerControlsDisabledAltEx), when no other row has that name."""
+    known = set()
+    for f in catalogue["functions"]:
+        known.add(f["name"].lower())
+        known.update(a.lower() for a in f.get("aliases") or [])
+    by = {c["name"].lower(): c for c in table["commands"]}
+    added = []
+    for f in catalogue["functions"]:
+        c = by.get(f["name"].lower())
+        if not c:
+            continue
+        for a in c["aliases"]:
+            if a.lower() not in known:
+                f.setdefault("aliases", []).append(a)
+                known.add(a.lower())
+                added.append(a)
+    return added
+
+
 def merge(table, catalogue):
     known = set()
     for f in catalogue["functions"]:
@@ -243,6 +264,8 @@ def main(argv=None):
         catalogue = json.load(f)
     added = merge(table, catalogue)
     extended = extend(table, catalogue)
+    aliases = add_aliases(table, catalogue)
+    print(f"{len(aliases)} aliases added: " + ", ".join(aliases[:20]) + (" …" if len(aliases) > 20 else ""))
     print(f"{len(extended)} rows given the game's further parameters: " + ", ".join(extended[:20]) + (" …" if len(extended) > 20 else ""))
     by = {}
     for e in added:
