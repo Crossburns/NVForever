@@ -162,10 +162,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             g.gaps.hnd.ysi_traits.insert(key, text(args, 1));
             XVal::Num(1.0)
         }
-        _ => match string_maps(g, name, args) {
-            Some(v) => v,
-            None => return None,
-        },
+        _ => string_maps(g, name, args)?,
     };
     Some(Ok(v))
 }

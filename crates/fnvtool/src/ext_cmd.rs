@@ -232,27 +232,7 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
         }
         ExtCmd::ScriptRunner { lo, schema, functions, roots, run } => script_runner(&lo, &schema, functions, roots, run),
         ExtCmd::Queries { lo, schema, functions, steps, start_cell, save, trace, ini, config } => {
-            // Mods' files as `script run` sees them: the Data folder (and its archives)
-            // read-only, `--config` for Data\Config; nothing is written to disk.
-            let vfs = std::sync::Arc::new(fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins).ok());
-            let v2 = vfs.clone();
-            let lookup: fnv_game::mod_files::Lookup = std::sync::Arc::new(move |p: &str| match vfs.as_ref() {
-                Some(v) if v.loose_path(p).is_some() => 1,
-                Some(v) if v.exists(p) => 2,
-                _ => 0,
-            });
-            let reader: fnv_game::mod_files::Reader = std::sync::Arc::new(move |p: &str| v2.as_ref().as_ref().and_then(|v| v.read(p)).and_then(Result::ok));
-            fnv_game::mod_files::set_roots(fnv_game::mod_files::Roots { read: vec![lo.data_dir.clone()], config, write: None, lookup: Some(lookup), reader: Some(reader) });
-            // The menus' tile tree, as the engine loads it at its start, so the UI
-            // functions read the HUD's traits (ui_loading::load).
-            if let Ok(v) = fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins) {
-                let v = std::sync::Arc::new(v);
-                fnv_game::ui_loading::set_headless_menus(std::sync::Arc::new(move |w: &fnv_sim::World<'_>| {
-                    let files = fnv_game::ui_loading::UiFiles::new(v.clone(), w);
-                    let paths = files.menu_paths();
-                    Some((Box::new(files) as Box<dyn fnv_ui::Source + Send + Sync>, paths))
-                }));
-            }
+            headless_files(&lo, config);
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
             let jtext = std::fs::read_to_string(&steps).with_context(|| steps.display().to_string())?;
             let job: Value = serde_json::from_str(&jtext).with_context(|| steps.display().to_string())?;
@@ -366,6 +346,30 @@ pub(crate) fn query_input(job: &Value, start_cell: Option<&str>) -> anyhow::Resu
 /// fnv.ext.probes/1 from a run's query observations, as jip_probes.py's collector writes
 /// it from the game's capture: numbers as `%.6g`, errors listed apart.
 /// `ext script-runner`: the Script Runner files of `roots` and Data, compiled (and run).
+/// Mods' files for a headless run (`script run`, `ext queries`): the Data folder (and its
+/// archives) read-only, `--config` for Data\Config, nothing written to disk; and the
+/// menus' tile tree as the engine loads it at its start, so the UI functions (GetUIFloat,
+/// InjectUIXML, IsComponentLoaded) see the HUD (ui_loading::load).
+pub(crate) fn headless_files(lo: &LoadOrderArgs, config: Option<PathBuf>) {
+    let vfs = std::sync::Arc::new(fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins).ok());
+    let v2 = vfs.clone();
+    let lookup: fnv_game::mod_files::Lookup = std::sync::Arc::new(move |p: &str| match vfs.as_ref() {
+        Some(v) if v.loose_path(p).is_some() => 1,
+        Some(v) if v.exists(p) => 2,
+        _ => 0,
+    });
+    let reader: fnv_game::mod_files::Reader = std::sync::Arc::new(move |p: &str| v2.as_ref().as_ref().and_then(|v| v.read(p)).and_then(Result::ok));
+    fnv_game::mod_files::set_roots(fnv_game::mod_files::Roots { read: vec![lo.data_dir.clone()], config, write: None, lookup: Some(lookup), reader: Some(reader) });
+    if let Ok(v) = fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins) {
+        let v = std::sync::Arc::new(v);
+        fnv_game::ui_loading::set_headless_menus(std::sync::Arc::new(move |w: &fnv_sim::World<'_>| {
+            let files = fnv_game::ui_loading::UiFiles::new(v.clone(), w);
+            let paths = files.menu_paths();
+            Some((Box::new(files) as Box<dyn fnv_ui::Source + Send + Sync>, paths))
+        }));
+    }
+}
+
 fn script_runner(lo: &LoadOrderArgs, schema: &Path, functions: Option<PathBuf>, mut roots: Vec<PathBuf>, run: bool) -> anyhow::Result<Value> {
     use fnv_game::script_runner::{Moment, SrRun};
     let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
@@ -595,6 +599,8 @@ pub(crate) fn bytecode_uses_extender(bytes: &[u8], table: &FunctionTable) -> boo
             Stmt::Set { expr, .. } => in_expr(expr),
             Stmt::If { arms, .. } => arms.iter().any(|a| in_expr(&a.cond)),
             Stmt::Unmatched { cond, .. } => cond.as_ref().is_some_and(in_expr),
+            // The extender's own statements, and its calls read into the tree.
+            Stmt::Let { .. } | Stmt::Eval { .. } | Stmt::While { .. } | Stmt::ForEach { .. } | Stmt::Break | Stmt::Continue => true,
             _ => false,
         }
     });

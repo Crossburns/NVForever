@@ -2283,8 +2283,14 @@ fn run_as(
         g.coverage = Some(Default::default());
     }
     if input.new_game {
+        // The Script Runner's files as the engine runs them for a new game
+        // (nvf-play script.rs): the game restart's before it, the new game's after
+        // (ext-script-runner.md §2). A run whose Data has no NVSE\plugins\scripts folder
+        // runs none.
+        g.run_script_runner(crate::script_runner::Moment::Restart);
         g.new_game();
         new_game_start(&mut g);
+        g.run_script_runner(crate::script_runner::Moment::NewGame);
     }
     let mut given_errors = Vec::new();
     for (i, gv) in input.given.iter().enumerate() {

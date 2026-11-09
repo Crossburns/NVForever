@@ -266,6 +266,31 @@ fn mirror(
             }
         }
     }
+    // The player's first-person arms rig, apart (NIF-block functions with pcModel 2).
+    let first = body.as_deref().and_then(|b| b.first_rig()).map(|(root, rig)| {
+        let mut seen: HashMap<String, u32> = HashMap::new();
+        walk(root, &nodes)
+            .into_iter()
+            .filter_map(|(e, parent)| {
+                let base = name_of(e, &nodes, &rig);
+                let (_, t, _, hidden) = nodes.get(e).ok()?;
+                let n = seen.entry(base.to_ascii_lowercase()).or_insert(0);
+                let shown = if *n == 0 { base.clone() } else { format!("{base}:{}", *n - 1) };
+                *n += 1;
+                let (z, y, x) = t.rotation.to_euler(EulerRot::ZYX);
+                Some(SceneNode {
+                    name: shown,
+                    parent,
+                    translation: t.translation.to_array(),
+                    rotation: [x.to_degrees(), y.to_degrees(), z.to_degrees()],
+                    scale: t.scale.x,
+                    flags: u32::from(hidden),
+                    material: None,
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    rt.game.scene.set_first_person_tree(first);
     // The trees of the references scripts asked about.
     let watched: Vec<FormId> = rt.game.scene.watched().collect();
     for r in watched {

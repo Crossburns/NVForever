@@ -50,6 +50,8 @@ pub enum SceneEdit {
 #[derive(Debug)]
 pub struct SceneMirror {
     trees: HashMap<FormId, Vec<SceneNode>>,
+    /// The player's first-person arms rig, apart from its body (`pcModel` 2).
+    first_person: Option<Vec<SceneNode>>,
     watched: HashSet<FormId>,
     edits: Vec<SceneEdit>,
 }
@@ -59,7 +61,7 @@ pub struct SceneMirror {
 /// the original answers at once [observed: hnd3].
 impl Default for SceneMirror {
     fn default() -> Self {
-        SceneMirror { trees: HashMap::new(), watched: HashSet::from([FormId::PLAYER_REF]), edits: Vec::new() }
+        SceneMirror { trees: HashMap::new(), first_person: None, watched: HashSet::from([FormId::PLAYER_REF]), edits: Vec::new() }
     }
 }
 
@@ -72,6 +74,21 @@ impl SceneMirror {
     /// The engine tells a watched reference's tree (parents before children).
     pub fn set_tree(&mut self, r: FormId, nodes: Vec<SceneNode>) {
         self.trees.insert(r, nodes);
+    }
+
+    /// The engine tells the player's first-person rig.
+    pub fn set_first_person_tree(&mut self, nodes: Option<Vec<SceneNode>>) {
+        self.first_person = nodes;
+    }
+
+    /// The tree a NIF-block function reads: the player's first-person rig for `pcModel`
+    /// 2, else the reference's [observed: hnd3, `PlayerRef.GetNifScale "NeckController" 2`
+    /// gave 1 and 0 or 1 gave 0; the node is only in the first-person skeleton].
+    fn tree_for(&mut self, r: FormId, pc_model: f64) -> Option<&mut Vec<SceneNode>> {
+        if r == FormId::PLAYER_REF && pc_model == 2.0 {
+            return self.first_person.as_mut();
+        }
+        self.tree(r)
     }
 
     /// The reference's 3D is gone.
@@ -309,7 +326,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         }
         // A missing block 0 [observed].
         "getnifblockscale" => {
-            let Some(t) = g.scene.tree(r) else { return Some(Ok(zero)) };
+            let Some(t) = g.scene.tree_for(r, num(args, 1, 0.0)) else { return Some(Ok(zero)) };
             XVal::Num(find(t, &text(args, 0)).map_or(0.0, |i| f64::from(t[i].scale)))
         }
         "setnifblockscale" => {

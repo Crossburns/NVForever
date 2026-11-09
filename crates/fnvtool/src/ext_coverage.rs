@@ -214,7 +214,7 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, 
         std::fs::write(dir.join("source_failures.txt"), out)?;
     }
     let mut fails: Vec<_> = by_plugin.into_iter().collect();
-    fails.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    fails.sort_by_key(|f| std::cmp::Reverse(f.1.len()));
     Ok(json!({
         "format": "fnv.ext.coverage/2",
         "summary": {
@@ -324,7 +324,7 @@ pub(crate) fn bytes_check(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Pat
         std::fs::write(p, diffs)?;
     }
     let mut unread: Vec<_> = unread.into_iter().collect();
-    unread.sort_by(|a, b| b.1.cmp(&a.1));
+    unread.sort_by_key(|u| std::cmp::Reverse(u.1));
     Ok(json!({
         "format": "fnv.ext.bytes_check/1",
         "units_calling_the_extender": ext,

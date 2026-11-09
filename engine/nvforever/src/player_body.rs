@@ -734,6 +734,13 @@ impl PlayerBody {
         self.body.as_ref().map(|b| b.third.root)
     }
 
+    /// The first-person arms rig's root and node names, when there is one.
+    pub fn first_rig(&self) -> Option<(Entity, std::collections::HashMap<Entity, String>)> {
+        let f = self.body.as_ref()?.first.as_ref()?;
+        let a = &f.animator;
+        Some((f.root, a.nodes.iter().zip(&a.skel.names).filter_map(|(e, n)| n.clone().map(|n| (*e, n))).collect()))
+    }
+
     /// The third-person skeleton's node names by entity (its nodes carry no `Name`).
     pub fn third_names(&self) -> std::collections::HashMap<Entity, String> {
         let Some(b) = &self.body else { return Default::default() };
