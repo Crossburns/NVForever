@@ -27,7 +27,10 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   (Bevy's values over `sky::light_unit`); then Present. Blended materials go with
   Remix's blend types [documented: the runtime's surface_shared.h, BlendType]: alpha
   blend as alpha, additive (glows, lit windows, fire) as alpha-emissive, multiply as
-  multiplicative.
+  multiplicative. Alpha-tested and alpha-blended materials take their alpha state from
+  each instance (`useDrawCallAlphaState`, `InstanceInfoBlendEXT`): the texture's alpha
+  times the vertex colour's, as Bevy draws them. NIF decals go as static decals; LOD
+  terrain (depth bias -50 in Bevy, behind the loaded land) is sunk 200 units instead.
 - **Terrain.** A land quadrant's base mesh and its blended layer meshes (same vertex
   grid, the layer's opacity in the vertex alpha) go as one mesh with Remix Plus's
   terrain-layers material: the base and the top seven layers, weighted per vertex as the
@@ -71,5 +74,11 @@ every 600 frames gives the build and Present times.
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.
 
+- Roads: the sand parts of the road textures look flatter than in Bevy [observed:
+  Goodsprings, 2026-11-09; not land or LOD poking through, checked by hiding each].
+
 Test aids: `NVF_REMIX_SHOT=<seconds>:<file.bmp>` saves the Remix window's pixels;
+`NVF_REMIX_TRACE=<text>` logs the shapes whose albedo path, ` bias=<n>`, ` land=<bool>`
+or ` faded` holds the text, `NVF_REMIX_TRACE_HIDE` leaves them out and
+`NVF_REMIX_HIDE_LAND` leaves the land out;
 `NVF_REMIX_SUN_SCALE`, `NVF_REMIX_LIGHT_SCALE` scale the lights.

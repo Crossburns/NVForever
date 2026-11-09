@@ -98,6 +98,8 @@ struct RemixState {
     why: [u32; 4],
     shot_raised: bool,
     shot_taken: bool,
+    /// Shapes left out (test aid: NVF_REMIX_TRACE_HIDE).
+    hidden: HashSet<(AssetId<Mesh>, UntypedAssetId)>,
     /// Time in `frame` building the scene and in `present`, since the last stats line.
     build_time: std::time::Duration,
     present_time: std::time::Duration,
@@ -292,6 +294,8 @@ struct ShapeIn<'a> {
     /// A mesh of a cell's land (its base or a blended texture layer), and its cell.
     land: bool,
     parent: Option<Entity>,
+    /// The shape lies on another surface (a NIF decal: roads on the land, posters).
+    decal: bool,
 }
 
 impl<'w, 's> Shapes<'w, 's> {
@@ -300,18 +304,19 @@ impl<'w, 's> Shapes<'w, 's> {
             q: &'a Query<ShapeParts<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>>,
             m: &'a Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>,
             out: &mut Vec<ShapeIn<'a>>,
+            decal: fn(&E) -> bool,
         ) {
             for (entity, mesh, mat, gt, vis, skinned, layers, land, parent) in q {
                 let Some(material) = m.get(mat.id()) else { continue };
-                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), skinned, layers, land, parent: parent.map(|p| p.parent()) });
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: decal(&material.extension) });
             }
         }
         let mut out = Vec::new();
-        take(&self.nif, &self.nif_m, &mut out);
-        take(&self.leaf, &self.leaf_m, &mut out);
-        take(&self.bark, &self.bark_m, &mut out);
-        take(&self.bill, &self.bill_m, &mut out);
-        take(&self.grass, &self.grass_m, &mut out);
+        take(&self.nif, &self.nif_m, &mut out, |e| e.decal);
+        take(&self.leaf, &self.leaf_m, &mut out, |_| false);
+        take(&self.bark, &self.bark_m, &mut out, |_| false);
+        take(&self.bill, &self.bill_m, &mut out, |_| false);
+        take(&self.grass, &self.grass_m, &mut out, |_| false);
         out
     }
 }
@@ -333,6 +338,7 @@ fn frame(
     meshes_all: Res<Assets<Mesh>>,
     points: Query<(Entity, &PointLight, &GlobalTransform, &InheritedVisibility)>,
     suns: Query<(Entity, &DirectionalLight, &GlobalTransform)>,
+    names: Option<Res<nvf_assets::texture::TextureCache>>,
 ) {
     let Some(mut cell) = world_state else { return };
     if cell.failed {
@@ -459,9 +465,10 @@ fn frame(
     let mut own = 0u32;
     let all = shapes.all();
     terrain_materials(st, &cpu, &all);
-    for ShapeIn { entity, mesh, mat, base, gt, vis, skinned, layers, land, .. } in all {
+    for ShapeIn { entity, mesh, mat, base, gt, vis, skinned, layers, land, decal, .. } in all {
         // Land: a blended layer already in its base's terrain material is not drawn alone.
-        if land && st.layered.contains(&mesh) {
+        // (Test aid: NVF_REMIX_HIDE_LAND leaves the land out.)
+        if land && (st.layered.contains(&mesh) || std::env::var_os("NVF_REMIX_HIDE_LAND").is_some()) {
             continue;
         }
         let layers = layers.cloned().unwrap_or_default();
@@ -500,7 +507,14 @@ fn frame(
             if !vis {
                 continue;
             }
-            0
+            // A decal: Remix lifts it off the surface it lies on [documented: remix_c.h,
+            // INSTANCE_CATEGORY_BIT_DECAL_STATIC]; traced level with it, the surface below
+            // showed through.
+            if decal {
+                ffi::CATEGORY_DECAL_STATIC
+            } else {
+                0
+            }
         };
         why[0] += 1;
         let key = (mesh, mat);
@@ -521,6 +535,9 @@ fn frame(
                     why[3] += 1;
                     continue;
                 };
+                if trace_shape(names.as_deref(), base, &data, land, decal) && std::env::var_os("NVF_REMIX_TRACE_HIDE").is_some() {
+                    st.hidden.insert(key);
+                }
                 let skin = data.skin.as_ref().map(|(w, j)| (4u32, w.as_slice(), j.as_slice()));
                 // The material's UV transform, baked in: Remix's materials have none (the
                 // Pip-Boy's screen shows a part of its canvas through one).
@@ -544,6 +561,9 @@ fn frame(
                 }
             }
         };
+        if st.hidden.contains(&key) {
+            continue;
+        }
         let two_sided = base.double_sided || base.cull_mode.is_none();
         // A skinned mesh: posed by its joints (joint × inverse bind pose, world space, as
         // Bevy skins it) taken into the instance's space, the instance where its entity is
@@ -560,8 +580,13 @@ fn frame(
                 .collect(),
             _ => Vec::new(),
         };
-        let tr = nvf_remix::transform_from_cols(gt.to_matrix().to_cols_array_2d());
-        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones).is_err() {
+        // LOD terrain (lod.rs gives its material a depth bias of -50 to keep it behind
+        // the loaded land where both exist): Remix has no depth bias, so it is sunk a
+        // little instead [design: 200 units, unseen at LOD distances; drawn level, its
+        // edges stood through the loaded land as streaked sheets, observed 2026-11-09].
+        let m = if base.depth_bias <= -50.0 { Mat4::from_translation(Vec3::new(0.0, -LOD_SINK, 0.0)) * gt.to_matrix() } else { gt.to_matrix() };
+        let tr = nvf_remix::transform_from_cols(m.to_cols_array_2d());
+        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, instance_alpha(base.alpha_mode)).is_err() {
             st.errors += 1;
         }
     }
@@ -761,6 +786,11 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         opacity: c.alpha,
         roughness: b.perceptual_roughness,
         metallic: b.metallic,
+        // Alpha-tested and alpha-blended: by the texture's alpha times the vertex
+        // colour's, as Bevy draws them (the sand drifting over roads fades out by its
+        // vertex alpha) [documented: remix_c.h useDrawCallAlphaState]; the state comes
+        // with each instance (`instance_alpha`).
+        draw_call_alpha: instance_alpha(b.alpha_mode).is_some(),
         alpha_test,
         blend,
     };
@@ -849,9 +879,59 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         why: [0; 4],
         shot_raised: false,
         shot_taken: false,
+        hidden: HashSet::new(),
         build_time: Default::default(),
         present_time: Default::default(),
     })
+}
+
+/// How far LOD terrain is sunk under the loaded land (game units, Bevy's up is +y).
+const LOD_SINK: f32 = 200.0;
+
+/// The alpha state an instance of a material with this alpha mode carries: alpha-tested
+/// and alpha-blended ones only (glows and multiplied shapes keep their blend type).
+fn instance_alpha(mode: AlphaMode) -> Option<nvf_remix::InstanceAlpha> {
+    match mode {
+        AlphaMode::Mask(t) => Some(nvf_remix::InstanceAlpha { test: Some((t * 255.0) as u8), blend: false }),
+        AlphaMode::Blend | AlphaMode::Premultiplied => Some(nvf_remix::InstanceAlpha { test: None, blend: true }),
+        _ => None,
+    }
+}
+
+/// Test aid: `NVF_REMIX_TRACE=<text>` logs each shape sent whose albedo texture's path
+/// holds that text (lower case), or `bias=<n>` for the material's depth bias: its material
+/// and mesh as Remix gets them.
+fn trace_shape(names: Option<&nvf_assets::texture::TextureCache>, b: &StandardMaterial, data: &CpuMesh, land: bool, decal: bool) -> bool {
+    static WANT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let Some(want) = WANT.get_or_init(|| std::env::var("NVF_REMIX_TRACE").ok().map(|s| s.to_lowercase())) else { return false };
+    let path = |h: &Option<Handle<Image>>| h.as_ref().and_then(|h| names.and_then(|n| n.name_of(h.id()))).map(str::to_lowercase).unwrap_or_default();
+    let albedo = path(&b.base_color_texture);
+    let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+    let (mut amin, mut amax) = (255u32, 0u32);
+    for v in &data.verts {
+        for k in 0..2 {
+            lo[k] = lo[k].min(v.texcoord[k]);
+            hi[k] = hi[k].max(v.texcoord[k]);
+        }
+        amin = amin.min(v.color >> 24);
+        amax = amax.max(v.color >> 24);
+    }
+    // Matched against the albedo's path, ` bias=<depth bias>`, ` land=<bool>` and
+    // ` faded` (some vertex alpha below 255).
+    let faded = if amin < 255 { " faded" } else { "" };
+    if !format!("{albedo} bias={} land={land}{faded}", b.depth_bias).contains(want.as_str()) {
+        return false;
+    }
+    info!(
+        "remix trace: {albedo} normal {} alpha {:?} land {land} decal {decal} unlit {} uv_transform {:?} colour {:?}; {} verts, uv {lo:?}..{hi:?}, vertex alpha {amin}..{amax}",
+        path(&b.normal_map_texture),
+        b.alpha_mode,
+        b.unlit,
+        b.uv_transform,
+        b.base_color,
+        data.verts.len()
+    );
+    true
 }
 
 /// Remix shut down when the game ends, while its window is still there: dropping it with

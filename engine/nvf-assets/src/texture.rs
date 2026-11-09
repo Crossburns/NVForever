@@ -271,6 +271,11 @@ pub fn is_first_person_texture(path: &str) -> bool {
 }
 
 impl TextureCache {
+    /// The texture path an image was loaded from (a linear search: test aids only).
+    pub fn name_of(&self, id: AssetId<Image>) -> Option<&str> {
+        self.map.iter().chain(self.clamped.iter()).find(|(_, h)| h.as_ref().is_some_and(|h| h.id() == id)).map(|((n, _), _)| n.as_str())
+    }
+
     /// Drop the textures nothing else holds (no live material uses them), after their
     /// grace time (`crate::release`); the number dropped. Keys: (path, sRGB, clamped).
     /// The textures held, for the stress census: an entry is idle when only the cache

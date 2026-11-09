@@ -96,10 +96,22 @@ pub struct MaterialDesc {
     pub opacity: f32,
     pub roughness: f32,
     pub metallic: f32,
+    /// The alpha test and blend come from each instance's [`InstanceAlpha`] (alpha the
+    /// texture's times the vertex colour's) instead of `alpha_test` and `blend`.
+    pub draw_call_alpha: bool,
     /// Alpha-tested at this reference (0-255), or `None` for opaque.
     pub alpha_test: Option<u8>,
     /// Blended over what is behind, by this blend type (`BLEND_*`), or `None` for not.
     pub blend: Option<i32>,
+}
+
+/// An instance's alpha state (see [`Remix::draw_instance_skinned`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InstanceAlpha {
+    /// Alpha-tested at this reference (0-255).
+    pub test: Option<u8>,
+    /// Blended over what is behind by its alpha.
+    pub blend: bool,
 }
 
 impl Remix {
@@ -221,7 +233,7 @@ impl Remix {
             alphaIsThinFilmThickness: 0,
             heightTexture: none.as_ptr(),
             displaceIn: 0.0,
-            useDrawCallAlphaState: 0,
+            useDrawCallAlphaState: u32::from(m.draw_call_alpha),
             blendType_hasvalue: u32::from(m.blend.is_some()),
             blendType_value: m.blend.unwrap_or(BLEND_ALPHA),
             invertedBlend: 0,
@@ -397,13 +409,41 @@ impl Remix {
     }
 
     pub fn draw_instance(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool) -> Result<(), Error> {
-        self.draw_instance_skinned(mesh, transform, categories, double_sided, &[])
+        self.draw_instance_skinned(mesh, transform, categories, double_sided, &[], None)
     }
 
     /// An instance posed by `bones` (object space, at most [`MAX_BONES`]; none: unposed).
-    pub fn draw_instance_skinned(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, bones: &[Transform]) -> Result<(), Error> {
-        let mut ext = InstanceInfoBoneTransformsEXT { sType: ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT, pNext: std::ptr::null_mut(), boneTransforms_values: bones.as_ptr(), boneTransforms_count: bones.len().min(MAX_BONES) as u32 };
-        let next = if bones.is_empty() { std::ptr::null_mut() } else { (&mut ext as *mut InstanceInfoBoneTransformsEXT).cast() };
+    ///
+    /// `alpha`: the instance's alpha state, for a material made with
+    /// [`MaterialDesc::draw_call_alpha`]: alpha is the texture's times the vertex colour's.
+    pub fn draw_instance_skinned(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, bones: &[Transform], alpha: Option<InstanceAlpha>) -> Result<(), Error> {
+        let mut blend = alpha.map(|a| InstanceInfoBlendEXT {
+            sType: ST_INSTANCE_INFO_BLEND_EXT,
+            pNext: std::ptr::null_mut(),
+            alphaTestEnabled: u32::from(a.test.is_some()),
+            alphaTestReferenceValue: a.test.unwrap_or(0),
+            alphaTestCompareOp: VK_COMPARE_GREATER_OR_EQUAL,
+            alphaBlendEnabled: u32::from(a.blend),
+            srcColorBlendFactor: VK_BLEND_SRC_ALPHA,
+            dstColorBlendFactor: VK_BLEND_ONE_MINUS_SRC_ALPHA,
+            colorBlendOp: 0,
+            textureColorArg1Source: TA_TEXTURE,
+            textureColorArg2Source: TA_VERTEX_COLOR,
+            textureColorOperation: TOP_SELECT_ARG1,
+            textureAlphaArg1Source: TA_TEXTURE,
+            textureAlphaArg2Source: TA_VERTEX_COLOR,
+            textureAlphaOperation: TOP_MODULATE,
+            tFactor: 0xFFFF_FFFF,
+            isTextureFactorBlend: 0,
+            srcAlphaBlendFactor: VK_BLEND_ONE,
+            dstAlphaBlendFactor: VK_BLEND_ONE_MINUS_SRC_ALPHA,
+            alphaBlendOp: 0,
+            writeMask: 0xF,
+            isVertexColorBakedLighting: 0,
+        });
+        let blend_ptr: *mut c_void = blend.as_mut().map_or(std::ptr::null_mut(), |b| (b as *mut InstanceInfoBlendEXT).cast());
+        let mut ext = InstanceInfoBoneTransformsEXT { sType: ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT, pNext: blend_ptr, boneTransforms_values: bones.as_ptr(), boneTransforms_count: bones.len().min(MAX_BONES) as u32 };
+        let next = if bones.is_empty() { blend_ptr } else { (&mut ext as *mut InstanceInfoBoneTransformsEXT).cast() };
         let info = InstanceInfo { sType: ST_INSTANCE_INFO, pNext: next, categoryFlags: categories, mesh, transform: *transform, doubleSided: u32::from(double_sided) };
         // SAFETY: checked present in load.
         check("DrawInstance", unsafe { (self.api.DrawInstance.unwrap_unchecked())(&info) })

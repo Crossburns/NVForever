@@ -37,6 +37,7 @@ pub const ST_LIGHT_INFO_SPHERE_EXT: u32 = 11;
 pub const ST_MESH_INFO: u32 = 12;
 pub const ST_INSTANCE_INFO: u32 = 13;
 pub const ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT: u32 = 14;
+pub const ST_INSTANCE_INFO_BLEND_EXT: u32 = 15;
 pub const MAX_BONES: usize = 256;
 pub const ST_CAMERA_INFO: u32 = 16;
 pub const ST_CAMERA_INFO_PARAMETERIZED_EXT: u32 = 17;
@@ -86,6 +87,7 @@ pub const CATEGORY_WORLD_MATTE: u32 = 1 << 1;
 pub const CATEGORY_SKY: u32 = 1 << 2;
 pub const CATEGORY_IGNORE: u32 = 1 << 3;
 pub const CATEGORY_IGNORE_LIGHTS: u32 = 1 << 4;
+pub const CATEGORY_DECAL_STATIC: u32 = 1 << 11;
 pub const CATEGORY_ANIMATED_WATER: u32 = 1 << 17;
 /// Blend types [documented: the runtime's surface_shared.h, BlendType]: alpha over what
 /// is behind; colour times alpha added to it (a glow); multiplied with it.
@@ -305,6 +307,46 @@ pub struct InstanceInfoBoneTransformsEXT {
     pub boneTransforms_values: *const Transform,
     pub boneTransforms_count: u32,
 }
+
+/// An instance's fixed-function alpha state (D3D9's alpha test, blend and texture stage),
+/// used by a material made with `useDrawCallAlphaState` [documented: remix_c.h].
+#[repr(C)]
+pub struct InstanceInfoBlendEXT {
+    pub sType: u32,
+    pub pNext: *mut c_void,
+    pub alphaTestEnabled: u32,
+    pub alphaTestReferenceValue: u8,
+    pub alphaTestCompareOp: u32,
+    pub alphaBlendEnabled: u32,
+    pub srcColorBlendFactor: u32,
+    pub dstColorBlendFactor: u32,
+    pub colorBlendOp: u32,
+    pub textureColorArg1Source: u32,
+    pub textureColorArg2Source: u32,
+    pub textureColorOperation: u32,
+    pub textureAlphaArg1Source: u32,
+    pub textureAlphaArg2Source: u32,
+    pub textureAlphaOperation: u32,
+    pub tFactor: u32,
+    pub isTextureFactorBlend: u32,
+    pub srcAlphaBlendFactor: u32,
+    pub dstAlphaBlendFactor: u32,
+    pub alphaBlendOp: u32,
+    pub writeMask: u32,
+    pub isVertexColorBakedLighting: u32,
+}
+
+/// Texture-stage argument sources and operations [documented: the runtime's
+/// surface_shared.h, RtTextureArgSource, DxvkRtTextureOperation]; compare ops and blend
+/// factors are Vulkan's.
+pub const TA_TEXTURE: u32 = 1;
+pub const TA_VERTEX_COLOR: u32 = 2;
+pub const TOP_SELECT_ARG1: u32 = 1;
+pub const TOP_MODULATE: u32 = 3;
+pub const VK_COMPARE_GREATER_OR_EQUAL: u32 = 6;
+pub const VK_BLEND_ONE: u32 = 1;
+pub const VK_BLEND_SRC_ALPHA: u32 = 6;
+pub const VK_BLEND_ONE_MINUS_SRC_ALPHA: u32 = 7;
 
 #[repr(C)]
 pub struct LightInfoLightShaping {
