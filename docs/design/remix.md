@@ -121,6 +121,21 @@ Second pass, 2026-11-09 (remix.rs, read against the wrapper and the runtime agai
 - Land: the vertex colours as the terrain material's tint texture, white vertices,
   roughness 0.85 [documented: api_terrain.cpp; remix-comp.ini TerrainRoughness].
 
+Effects, third pass (2026-11-09):
+
+- Light cards (unlit, additive, External Emittance or under a NiBillboardNode:
+  `NifSurface::light_card`) are left out, as the wrapper leaves them out; so are
+  refracting shells, which only bend the picture behind them. About 100 shapes a frame in
+  Goodsprings.
+- Unlit alpha-over cards that are not decals (smoke, dust, steam) carry PARTICLE.
+- Additive and multiplied shapes carry their instance state: texture x vertex colour, with
+  their own blend factors (SRC_ALPHA/ONE, ONE/ONE for `add_whole`, DST_COLOR/ZERO); a
+  blended shape with an alpha cut is tested and blended.
+- View-angle falloff (BSShaderNoLighting): each vertex's opacity from |N.V| as
+  nif_material.wesl's falloff_opacity, in its alpha (and colour for ONE/ONE), refreshed in
+  place when the eye has moved 32 units; about 190 shapes in Goodsprings. The original
+  fades them in its vertex shader, which Remix captures on the D3D9 route.
+
 Memory and frame cost, same pass [observed, Goodsprings, 1280x720, High preset]:
 
 - A world texture's pixels go to Remix and Bevy keeps one 4x4 level of it

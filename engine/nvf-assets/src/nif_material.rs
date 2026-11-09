@@ -331,6 +331,11 @@ pub struct NifSurface {
     /// (FSR's temporal upscaling) it is drawn alpha-tested at this cut, so it has depth
     /// and motion and is not translucent to the upscaler; otherwise blended. CPU only.
     pub blended_cutout: Option<f32>,
+    /// A light card: an unlit additive glow, flare or light-beam card (BSShaderNoLighting,
+    /// added over the picture, and External Emittance set or a NiBillboardNode above it).
+    /// New Vegas RTX leaves these out of the traced scene [documented: its
+    /// scene_statics.cpp light_card_shape, api_unlit.cpp "Not a light card"]. CPU only.
+    pub light_card: bool,
     /// Holes (module notes, "Holes"): x the value in alpha units (0–255) at and above
     /// which the holes texture's alpha leaves a hole, negative for none; y the width of
     /// the edge band below it; z 1 turns the test round (a hole where the alpha is
@@ -444,6 +449,7 @@ impl Default for NifSurface {
             add_linear: false,
             pipboy_screen: false,
             blended_cutout: None,
+            light_card: false,
             holes: NO_HOLES,
             holes_edge: Vec4::ONE,
             soft: Vec4::ZERO,

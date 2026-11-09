@@ -1548,8 +1548,10 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
         let mut ancestors = Vec::new();
         let mut cur = o.parent;
         let mut depth = 0;
+        let mut under_billboard = false;
         while let Some(p) = cur {
             let Some(po) = by_block.get(&p) else { break };
+            under_billboard |= po.type_name == "NiBillboardNode";
             if po.parent.is_some() {
                 t = affine(&po.transform) * t;
                 ancestors.extend(po.name.clone());
@@ -1597,7 +1599,8 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                 cycle: OwnCycle { start: g.start_time, stop: g.stop_time, frequency: g.frequency.max(1e-6), phase: g.phase, cycle_type: (g.flags >> 1) & 3 },
             })
         });
-        let (material, _missing) = shape_material_with(&props, &mut mesh, sink);
+        let (mut material, _missing) = shape_material_with(&props, &mut mesh, sink);
+        material.extension.light_card = material.base.unlit && matches!(material.base.alpha_mode, bevy::prelude::AlphaMode::Add) && (props.external_emittance() || under_billboard);
         if let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             for v in p {
                 let q = (out.root * t).transform_point3(Vec3::from_array(*v));

@@ -196,8 +196,10 @@ struct RemixState {
     light_scale: f32,
     sun_scale: f32,
     started: std::time::Instant,
-    why: [u32; 4],
+    why: [u32; 6],
     shot_taken: bool,
+    /// Where the eye was when each falloff shape's vertices were last faded.
+    falloff_eye: HashMap<(AssetId<Mesh>, UntypedAssetId), Vec3>,
     /// Raw input is shared with the runtime's menu window.
     input_shared: bool,
     /// The quadratic attenuation an engine light carries (NVF_REMIX_LIGHT_A2).
@@ -506,6 +508,23 @@ struct ShapeIn<'a> {
     /// An additive shape that adds its colour whole (NiAlphaProperty ONE / ONE), not by
     /// its alpha (`NifSurface::add_whole`).
     add_whole: bool,
+    /// What else the NIF material says that StandardMaterial does not hold.
+    nif: NifExtra,
+}
+
+/// The NIF material's fields the Remix scene needs beyond StandardMaterial
+/// (nvf_assets::nif_material::NifSurface).
+#[derive(Clone, Copy, Default)]
+struct NifExtra {
+    /// Left out of the traced scene, as New Vegas RTX leaves it out (`NifSurface::light_card`).
+    light_card: bool,
+    /// A refracting shell: it only bends the picture behind it (NifSurface::refract).
+    refract: bool,
+    /// The alpha test of a blended shape (NifSurface::alpha_cut, 0..1; 0 none).
+    alpha_cut: f32,
+    /// The view-angle opacity falloff (NifSurface::falloff: start and stop cosines, start
+    /// and stop opacities), when the shape has one.
+    falloff: Option<Vec4>,
 }
 
 impl<'w, 's> Shapes<'w, 's> {
@@ -514,19 +533,22 @@ impl<'w, 's> Shapes<'w, 's> {
             q: &'a Query<ShapeParts<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>>,
             m: &'a Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>,
             out: &mut Vec<ShapeIn<'a>>,
-            flags: fn(&E) -> (bool, bool),
+            flags: fn(&E) -> (bool, bool, NifExtra),
         ) {
             for (entity, mesh, mat, gt, vis, shown, skinned, layers, land, parent) in q {
                 let Some(material) = m.get(mat.id()) else { continue };
-                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: flags(&material.extension).0, add_whole: flags(&material.extension).1 });
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: flags(&material.extension).0, add_whole: flags(&material.extension).1, nif: flags(&material.extension).2 });
             }
         }
         let mut out = Vec::new();
-        take(&self.nif, &self.nif_m, &mut out, |e| (e.decal, e.add_whole > 0.5));
-        take(&self.leaf, &self.leaf_m, &mut out, |_| (false, false));
-        take(&self.bark, &self.bark_m, &mut out, |_| (false, false));
-        take(&self.bill, &self.bill_m, &mut out, |_| (false, false));
-        take(&self.grass, &self.grass_m, &mut out, |_| (false, false));
+        take(&self.nif, &self.nif_m, &mut out, |e| {
+            let extra = NifExtra { light_card: e.light_card, refract: e.refract, alpha_cut: e.alpha_cut, falloff: (e.falloff != nvf_assets::nif_material::Falloff::NONE.params).then_some(e.falloff) };
+            (e.decal, e.add_whole > 0.5, extra)
+        });
+        take(&self.leaf, &self.leaf_m, &mut out, |_| (false, false, NifExtra::default()));
+        take(&self.bark, &self.bark_m, &mut out, |_| (false, false, NifExtra::default()));
+        take(&self.bill, &self.bill_m, &mut out, |_| (false, false, NifExtra::default()));
+        take(&self.grass, &self.grass_m, &mut out, |_| (false, false, NifExtra::default()));
         out
     }
 }
@@ -724,7 +746,7 @@ fn frame(
     // What the camera sees, as Bevy culls it: an interior hides the exterior around it
     // that way [hypothesis: enough for the path tracer's reflections and shadows near the
     // view; wider sets later].
-    let mut why = [0u32; 4];
+    let mut why = [0u32; 6];
     let shadow_only = RenderLayers::layer(crate::sky::SHADOW_LAYER);
     let (first_person, body_shapes) = body.as_ref().map(|b| b.third_person_shapes()).unwrap_or((false, Vec::new()));
     let mut body_shapes: HashSet<Entity> = body_shapes.into_iter().collect();
@@ -748,7 +770,17 @@ fn frame(
     let mut unseen_built = 0usize;
     let all = shapes.all();
     terrain_materials(st, &cpu, &all);
-    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, add_whole, .. } in all {
+    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, add_whole, nif, .. } in all {
+        // As New Vegas RTX: light cards are not in the traced scene; refracting shells only
+        // bend what is behind them, which a path tracer has no use for [documented: the
+        // wrapper's scene_statics.cpp light_card_shape; design for refraction].
+        if nif.light_card || nif.refract {
+            why[4] += 1;
+            continue;
+        }
+        if nif.falloff.is_some() {
+            why[5] += 1;
+        }
         // In the traced scene: what the camera sees, and everything the game shows within
         // `member_radius` of the eye, seen or not: a path tracer needs what is behind and
         // beside the camera for its shadows, reflections and bounced light (New Vegas RTX
@@ -866,9 +898,16 @@ fn frame(
         if st.hidden.contains(&key) {
             continue;
         }
+        if let (Some(p), Some(e)) = (nif.falloff, eye) {
+            falloff_refresh(st, &cpu, key, handle, gt, p, add_whole, e);
+        }
         // The categories New Vegas RTX's rtx.conf lists give the albedo [documented: the
         // wrapper's api_material.cpp, m.categories from rtxconf::lookup].
         let category = category | listing(st, &base.base_color_texture).0;
+        // Smoke, dust and steam: unlit alpha-over cards that are not decals carry PARTICLE,
+        // so they stay translucent at every preset [documented: the wrapper's api_unlit.cpp,
+        // "cards", material::translucent_card].
+        let category = if base.unlit && matches!(base.alpha_mode, AlphaMode::Blend) && !decal { category | (1 << 9) } else { category };
         let two_sided = base.double_sided || base.cull_mode.is_none();
         // A skinned mesh: posed by its joints (joint × inverse bind pose, world space, as
         // Bevy skins it) taken into the instance's space, the instance where its entity is
@@ -891,7 +930,7 @@ fn frame(
         // edges stood through the loaded land as streaked sheets, observed 2026-11-09].
         let m = if base.depth_bias <= -50.0 { Mat4::from_translation(Vec3::new(0.0, -LOD_SINK, 0.0)) * gt.to_matrix() } else { gt.to_matrix() };
         let tr = nvf_remix::transform_from_cols(m.to_cols_array_2d());
-        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, if st.terrain.contains_key(&mesh) { None } else { instance_state(base, add_whole) }).is_err() {
+        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, if st.terrain.contains_key(&mesh) { None } else { instance_state(base, add_whole, nif.alpha_cut) }).is_err() {
             st.errors += 1;
         }
     }
@@ -1063,7 +1102,7 @@ fn frame(
         }
     }
     if st.frames % 600 == 1 {
-        info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3]);
+        info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}, light cards and refracting shells left out {}, with a view-angle falloff {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3], st.why[4], st.why[5]);
         let n = 600.0;
         info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed);
         st.remade = 0;
@@ -1505,8 +1544,9 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         light_scale: scale("NVF_REMIX_LIGHT_SCALE", 1.0),
         sun_scale: scale("NVF_REMIX_SUN_SCALE", 2.0),
         started: std::time::Instant::now(),
-        why: [0; 4],
+        why: [0; 6],
         shot_taken: false,
+        falloff_eye: HashMap::new(),
         input_shared: false,
         light_a2: scale("NVF_REMIX_LIGHT_A2", 0.001),
         d3d9: HashMap::new(),
@@ -1547,12 +1587,47 @@ fn instance_alpha(mode: AlphaMode) -> Option<nvf_remix::InstanceAlpha> {
     }
 }
 
+/// A shape's view-angle falloff in its vertices, as FNV's NoLighting vertex shader fades it
+/// and the D3D9 route New Vegas RTX keeps such shapes on hands Remix the result: each
+/// vertex's opacity from |N.V| (nif_material.wesl falloff_opacity), times its own alpha,
+/// and its colour too for a shape added whole (ONE / ONE ignores alpha). Refreshed in place
+/// when the eye has moved 32 units since [design: the cost of a refresh].
+#[allow(clippy::too_many_arguments)]
+fn falloff_refresh(st: &mut RemixState, cpu: &CpuMeshes, key: (AssetId<Mesh>, UntypedAssetId), handle: ffi::MeshHandle, gt: &GlobalTransform, p: Vec4, add_whole: bool, eye: Vec3) {
+    if st.falloff_eye.get(&key).is_some_and(|e| e.distance(eye) < 32.0) {
+        return;
+    }
+    let (Some(data), Some(&(nv, ni, hash)), Some(&mat)) = (cpu.by_id.get(&key.0), st.mesh_shape.get(&key), st.materials.get(&key.1)) else { return };
+    if data.skin.is_some() || data.verts.len() != nv || data.idx.len() != ni {
+        return;
+    }
+    let m = gt.affine();
+    let verts: Vec<HardcodedVertex> = data
+        .verts
+        .iter()
+        .map(|v| {
+            let pos = m.transform_point3(Vec3::from(v.position));
+            let n = m.transform_vector3(Vec3::from(v.normal)).normalize_or_zero();
+            let cos = n.dot((eye - pos).normalize_or_zero()).abs();
+            let t = ((cos - p.y) / (p.x - p.y)).clamp(0.0, 1.0);
+            let op = p.w + (p.z - p.w) * t;
+            let scale = |c: u32, shift: u32| ((((c >> shift) & 0xFF) as f32 * op).round().clamp(0.0, 255.0) as u32) << shift;
+            let c = v.color;
+            let color = if add_whole { scale(c, 24) | scale(c, 16) | scale(c, 8) | scale(c, 0) } else { scale(c, 24) | (c & 0x00FF_FFFF) };
+            HardcodedVertex { color, ..*v }
+        })
+        .collect();
+    if st.remix.refresh_mesh(hash, handle, &verts, &data.idx, mat) {
+        st.falloff_eye.insert(key, eye);
+    }
+}
+
 /// The texture stage state every instance carries: colour the texture's times the vertex
 /// colour's (as baked lighting on lit shapes: the runtime keeps its hue), with the alpha
 /// state of `instance_alpha` where the material has one [documented: New Vegas RTX's
 /// api_material.cpp vertex_color_blend, on every static]. Glows and multiplied shapes keep
 /// their material's blend type and get none.
-fn instance_state(b: &StandardMaterial, add_whole: bool) -> Option<nvf_remix::InstanceAlpha> {
+fn instance_state(b: &StandardMaterial, add_whole: bool, alpha_cut: f32) -> Option<nvf_remix::InstanceAlpha> {
     use nvf_remix::ffi::{VK_BLEND_DST_COLOR, VK_BLEND_ONE, VK_BLEND_SRC_ALPHA, VK_BLEND_ZERO};
     match b.alpha_mode {
         // Glows and multiplied shapes: their own blend factors, colour and alpha the
@@ -1567,6 +1642,9 @@ fn instance_state(b: &StandardMaterial, add_whole: bool) -> Option<nvf_remix::In
             factors: Some((if add_whole { VK_BLEND_ONE } else { VK_BLEND_SRC_ALPHA }, VK_BLEND_ONE)),
         }),
         AlphaMode::Multiply => Some(nvf_remix::InstanceAlpha { test: None, blend: true, baked: false, factors: Some((VK_BLEND_DST_COLOR, VK_BLEND_ZERO)) }),
+        // A blended shape that also cuts (NifSurface::alpha_cut): alpha-tested and blended,
+        // as the NIF's NiAlphaProperty sets both.
+        AlphaMode::Blend if alpha_cut > 0.0 => Some(nvf_remix::InstanceAlpha { test: Some((alpha_cut.clamp(0.0, 1.0) * 255.0) as u8), blend: true, baked: !b.unlit, factors: None }),
         m => Some(nvf_remix::InstanceAlpha { baked: !b.unlit, ..instance_alpha(m).unwrap_or(nvf_remix::InstanceAlpha { test: None, blend: false, baked: true, factors: None }) }),
     }
 }
