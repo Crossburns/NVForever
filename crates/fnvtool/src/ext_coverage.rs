@@ -39,12 +39,50 @@ fn files(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
 }
 
 /// The extender's statement keywords: syntax the compiler reads, not functions to call.
-const KEYWORDS: [&str; 7] = ["eval", "let", "while", "loop", "foreach", "continue", "break"];
+const KEYWORDS: [&str; 11] = ["eval", "let", "while", "loop", "foreach", "continue", "break", "function", "goto", "label", "none"];
 
-/// How the VM answers a bare call of `name`.
-fn probe(g: &mut fnv_game::game::Game<'_>, name: &str) -> (&'static str, String) {
+/// Arguments for a call of `name` by its catalogue parameters (the required ones): a number,
+/// a string, the player, a form of the base game (the 10mm pistol), a declared variable.
+fn args_for(table: &FunctionTable, name: &str) -> String {
+    let Some(u) = table.unnumbered.get(&name.to_ascii_lowercase()) else { return String::new() };
+    let mut out = String::new();
+    for p in u.params.iter().filter(|p| !p.optional) {
+        let ty = p.wiki_type.as_deref().unwrap_or("").to_ascii_lowercase();
+        let a = match p.kind.as_str() {
+            "int" | "float" | "unknown" => "1",
+            "string" => "\"a\"",
+            "reference" => "PlayerRef",
+            "variable" => "fV",
+            "array" => "aV",
+            "axis" => "X",
+            "actor_value" => "Health",
+            _ if ty.contains("quest") => "VMQ01",
+            _ if ty.contains("actor") || ty.contains("npc") => "PlayerRef",
+            _ => "WeapNV10mmPistol",
+        };
+        out.push(' ');
+        out.push_str(a);
+    }
+    out
+}
+
+/// How the VM answers a call of `name`: bare, then (when that says "not built", as a
+/// handler that needs its arguments does) with arguments of the parameters' kinds.
+fn probe(g: &mut fnv_game::game::Game<'_>, table: &FunctionTable, name: &str) -> (&'static str, String) {
+    let first = probe_src(g, &format!("Begin Function {{ }}\nSetFunctionValue ({name})\nEnd\n"));
+    if first.0 != "missing" {
+        return first;
+    }
+    let a = args_for(table, name);
+    if a.is_empty() {
+        return first;
+    }
+    probe_src(g, &format!("float fV\narray_var aV\nBegin Function {{ }}\nlet aV := ar_List 1\nSetFunctionValue ({name}{a})\nEnd\n"))
+}
+
+fn probe_src(g: &mut fnv_game::game::Game<'_>, src: &str) -> (&'static str, String) {
     let before = g.events.len();
-    let src = format!("Begin Function {{ }}\nSetFunctionValue ({name})\nEnd\n");
+    let src = src.to_string();
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| g.run_query(&src, fnv_game::game::RunCtx::default())));
     let r = match r {
         Ok(r) => r,
@@ -146,7 +184,7 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, 
     let mut by_status: BTreeMap<&str, u64> = BTreeMap::new();
     let mut rows: Vec<(u64, u64, Value)> = Vec::new();
     for (name, u) in used.iter().filter(|(n, _)| !KEYWORDS.contains(&n.to_ascii_lowercase().as_str())) {
-        let (status, note) = probe(&mut g, name);
+        let (status, note) = probe(&mut g, &data.table, name);
         if status == "panics" {
             g = fresh();
         }
