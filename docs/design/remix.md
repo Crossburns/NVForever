@@ -20,6 +20,9 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
 - **Materials.** From the NIF material's base: albedo, normal and emissive textures (by
   their texture hash, `0x%016llX`), colours, roughness, metallic, alpha test or blend.
   A material is made once its textures have arrived (or after about 5 s without).
+  Textures repeat (Remix's wrap mode 1; 0 is clamp). Normal maps go with Remix's
+  tangent-space encoding: a linear texture named `…_n` in the texture cache (game
+  textures have no asset path); LOD terrain's model-space normal maps are left out.
 - **Each frame.** The player's camera (`PlayerCamera`), every shape the camera sees
   (Bevy's view culling, so an interior hides the exterior as it does in Bevy) as an
   instance, skinned ones posed by their joints in the instance's space; point lights as
@@ -74,8 +77,6 @@ every 600 frames gives the build and Present times.
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.
 
-- Roads: the sand parts of the road textures look flatter than in Bevy [observed:
-  Goodsprings, 2026-11-09; not land or LOD poking through, checked by hiding each].
 
 Test aids: `NVF_REMIX_SHOT=<seconds>:<file.bmp>` saves the Remix window's pixels;
 `NVF_REMIX_TRACE=<text>` logs the shapes whose albedo path, ` bias=<n>`, ` land=<bool>`

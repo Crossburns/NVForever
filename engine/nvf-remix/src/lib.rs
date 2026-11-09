@@ -288,8 +288,12 @@ impl Remix {
             spriteSheetCol: 1,
             spriteSheetFps: 0,
             filterMode: 1,
-            wrapModeU: 0,
-            wrapModeV: 0,
+            // 1 repeat (0 is clamp) [documented: the runtime's lssusd/mdl_helpers.h,
+            // WrapMode]: game textures tile; clamped, every surface whose texture
+            // coordinates leave 0..1 showed its edge texel smeared (flat ground, smooth
+            // rocks, streaked roads) [observed 2026-11-09].
+            wrapModeU: 1,
+            wrapModeV: 1,
         };
         let mut h = std::ptr::null_mut();
         // SAFETY: info chain and strings valid for the call.
@@ -328,8 +332,12 @@ impl Remix {
             spriteSheetCol: 1,
             spriteSheetFps: 0,
             filterMode: 1,
-            wrapModeU: 0,
-            wrapModeV: 0,
+            // 1 repeat (0 is clamp) [documented: the runtime's lssusd/mdl_helpers.h,
+            // WrapMode]: game textures tile; clamped, every surface whose texture
+            // coordinates leave 0..1 showed its edge texel smeared (flat ground, smooth
+            // rocks, streaked roads) [observed 2026-11-09].
+            wrapModeU: 1,
+            wrapModeV: 1,
         };
         let mut h = std::ptr::null_mut();
         // SAFETY: info chain and strings valid for the call.

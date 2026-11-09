@@ -209,7 +209,7 @@ fn remix_format(f: TextureFormat) -> Option<(u32, u32)> {
     })
 }
 
-fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<Image>>, server: Res<AssetServer>, mut cpu: ResMut<CpuMeshes>, ui: Option<Res<UiOverlay>>) {
+fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<Image>>, names: Option<Res<nvf_assets::texture::TextureCache>>, mut cpu: ResMut<CpuMeshes>, ui: Option<Res<UiOverlay>>) {
     for e in ev.read() {
         let (AssetEvent::Added { id } | AssetEvent::Modified { id }) = e else { continue };
         if ui.as_ref().is_some_and(|u| u.image == *id) {
@@ -242,10 +242,16 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<
             }
             continue;
         };
-        let normal = server.get_path(*id).is_some_and(|p| {
-            let s = p.path().to_string_lossy().to_ascii_lowercase();
-            s.ends_with("_n.dds") || s.ends_with("_n.png")
-        });
+        // A normal map: game textures have no asset path, so by the texture cache's name
+        // (`…_n.dds`); NVForever loads normal maps linear and pictures sRGB, so a linear
+        // texture the cache does not name is taken as one too [observed 2026-11-09: by
+        // path none was found, every normal map went as a picture and rocks and ground
+        // shaded flat].
+        let normal = !d.format.is_srgb()
+            && names.as_ref().and_then(|n| n.name_of(*id)).is_none_or(|n| {
+                let n = n.to_ascii_lowercase();
+                n.ends_with("_n.dds") || n.ends_with("_n.png")
+            });
         cpu.pending_images.push((*id, Arc::new(PendingImage { width: d.size.width, height: d.size.height, mips: d.mip_level_count, format: d.format, data, normal })));
     }
 }
@@ -776,7 +782,9 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
     let desc = nvf_remix::MaterialDesc {
         hash: hash_of(&id),
         albedo: tex(&b.base_color_texture),
-        normal: tex(&b.normal_map_texture),
+        // LOD terrain's normal maps are in model space (lod.rs), not the tangent space
+        // Remix reads: left out.
+        normal: if b.depth_bias <= -50.0 { None } else { tex(&b.normal_map_texture) },
         // An unlit surface (a screen) glows with its own picture [design: Remix lights
         // every surface; emission is how a picture shows unlit].
         emissive: if b.unlit { tex(&b.base_color_texture) } else { tex(&b.emissive_texture) },
