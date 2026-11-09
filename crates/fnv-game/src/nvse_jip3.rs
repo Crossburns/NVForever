@@ -21,6 +21,8 @@ pub struct Jip3State {
     pub jg_handlers: Vec<(JgEvent, XVal, Option<FormId>)>,
     /// FreezeTime's mode: game time stands still (`Game::tick`).
     pub time_frozen: bool,
+    /// The crosshair's reference at the last frame, to raise Crosshair on a change.
+    pub last_crosshair: Option<FormId>,
     /// Registrations refused for having no function, already reported.
     pub null_handler_noted: std::collections::HashSet<String>,
 }
@@ -36,6 +38,21 @@ pub enum JgEvent {
     CompleteQuest,
     /// A challenge is completed (SetJohnnyOnChallengeCompleteEventHandler).
     ChallengeComplete,
+    /// A quest fails (SetJohnnyOnFailQuestEventHandler).
+    FailQuest,
+    /// The reference under the crosshair changes (SetJohnnyOnCrosshairEventHandler).
+    Crosshair,
+    /// Registered only, not raised yet: the game's settings change, a menu's keyboard or
+    /// controller selection moves, a sleep or wait starts or ends, an actor's detection
+    /// data is seen, a limb comes off, an NPC answers, an actor's processing level
+    /// changes (the SetJohnnyOn… and SetOn… pages) [hypothesis: when each fires].
+    SettingsUpdate,
+    SelectionChange,
+    SleepWait,
+    SeenData,
+    LimbGone,
+    NpcResponse,
+    ProcessLevelChange,
 }
 
 fn form(args: &[XVal], k: usize) -> Option<FormId> {
@@ -400,11 +417,23 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // `set|remove function flag [filter]`: JohnnyGuitar's handlers kept here
         // (`Game::jg_event`) [documented: the SetJohnnyOn…EventHandler pages].
-        "setjohnnyonrendereventhandler" | "setjohnnyonrenderupdateeventhandler" | "setjohnnyondyingeventhandler" | "setjohnnyoncompletequesteventhandler" | "setjohnnyonchallengecompleteeventhandler" => {
+        "setjohnnyonrendereventhandler" | "setjohnnyonrenderupdateeventhandler" | "setjohnnyondyingeventhandler" | "setjohnnyoncompletequesteventhandler" | "setjohnnyonchallengecompleteeventhandler"
+        | "setjohnnyonfailquesteventhandler" | "setjohnnyoncrosshaireventhandler" | "setjohnnyonsettingsupdateeventhandler"
+        | "setjohnnyonkeyboardcontrollerselectionchangeeventhandler" | "setjohnnyonsleepwaiteventhandler" | "setjohnnyseendataeventhandler"
+        | "setjohnnyonlimbgoneeventhandler" | "setonnpcresponseeventhandler" | "setonprocesslevelchangeeventhandler" => {
             let ev = match name {
                 "setjohnnyondyingeventhandler" => JgEvent::Dying,
                 "setjohnnyoncompletequesteventhandler" => JgEvent::CompleteQuest,
                 "setjohnnyonchallengecompleteeventhandler" => JgEvent::ChallengeComplete,
+                "setjohnnyonfailquesteventhandler" => JgEvent::FailQuest,
+                "setjohnnyoncrosshaireventhandler" => JgEvent::Crosshair,
+                "setjohnnyonsettingsupdateeventhandler" => JgEvent::SettingsUpdate,
+                "setjohnnyonkeyboardcontrollerselectionchangeeventhandler" => JgEvent::SelectionChange,
+                "setjohnnyonsleepwaiteventhandler" => JgEvent::SleepWait,
+                "setjohnnyseendataeventhandler" => JgEvent::SeenData,
+                "setjohnnyonlimbgoneeventhandler" => JgEvent::LimbGone,
+                "setonnpcresponseeventhandler" => JgEvent::NpcResponse,
+                "setonprocesslevelchangeeventhandler" => JgEvent::ProcessLevelChange,
                 _ => JgEvent::RenderUpdate,
             };
             let Some(f) = args.get(1).cloned() else { return Some(Ok(zero)) };

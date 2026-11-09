@@ -2546,6 +2546,7 @@ impl<'a> Game<'a> {
                 s.completed = true;
                 if first {
                     self.emit(EventKind::QuestFailed { quest: q });
+                    self.jg_event(crate::nvse_jip3::JgEvent::FailQuest, Some(q));
                 }
             }
         }
@@ -3498,6 +3499,11 @@ impl<'a> Game<'a> {
         self.gaps.sounds.tick(dt, frame);
         self.projectiles_tick(dt as f32);
         self.jg_event(crate::nvse_jip3::JgEvent::RenderUpdate, None);
+        let cross = self.senses.crosshair_ref;
+        if cross != self.gaps.jip3.last_crosshair {
+            self.gaps.jip3.last_crosshair = cross;
+            self.jg_event(crate::nvse_jip3::JgEvent::Crosshair, cross);
+        }
         self.hud_tick();
         self.expire_aux_timers();
         self.input.next_frame();
