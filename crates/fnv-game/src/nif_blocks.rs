@@ -47,11 +47,20 @@ pub enum SceneEdit {
 }
 
 /// The mirror and the queued changes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SceneMirror {
     trees: HashMap<FormId, Vec<SceneNode>>,
     watched: HashSet<FormId>,
     edits: Vec<SceneEdit>,
+}
+
+/// The player is watched from the start: mods read its skeleton's nodes in their first
+/// script frame (B42 Inertia's start-up check, `GetNifScale "NeckController" 2`) and
+/// the original answers at once [observed: hnd3].
+impl Default for SceneMirror {
+    fn default() -> Self {
+        SceneMirror { trees: HashMap::new(), watched: HashSet::from([FormId::PLAYER_REF]), edits: Vec::new() }
+    }
 }
 
 impl SceneMirror {

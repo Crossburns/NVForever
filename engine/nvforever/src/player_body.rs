@@ -727,6 +727,14 @@ struct Body {
     first: Option<Rig>,
 }
 
+impl PlayerBody {
+    /// The third-person body's root entity, built in first person too (scripts read its
+    /// skeleton's nodes whatever the view: `nif_mirror`).
+    pub fn third_root(&self) -> Option<Entity> {
+        self.body.as_ref().map(|b| b.third.root)
+    }
+}
+
 /// State kept across body rebuilds (an outfit change rebuilds the body).
 struct Motion {
     weapon: Option<FormId>,

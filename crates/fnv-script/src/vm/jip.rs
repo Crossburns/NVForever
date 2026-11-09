@@ -107,17 +107,26 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 /// `fnv_ui::uio` does; and "itr-nvse" at 108 (1.0.8, SD Dynamic Encounters' minimum,
 /// whose calls after the check, CanPathToRef and MoveToGround, are built in
 /// `fnv_game::nvse_itr2`).
-pub const PLUGINS: [(&str, f64); 10] = [
+///
+/// For High and Dry, 2026-11-09 [design, same rule]: Stewie's Tweaks at 960, the most its
+/// mods ask (Quality of Life ESPless; TTW's 941 is met too); "yUI" at 140 (ySI's
+/// minimum; its ySIGetTrait and ySISetTrait are built); "Improved Console" at 3, the
+/// version the original reports there (one mod asks only whether it is installed).
+/// High and Dry's own install reports Stewie 1000, yUI 140, Improved Console 3
+/// [observed: hnd3].
+pub const PLUGINS: [(&str, f64); 12] = [
     ("JIP NVSE Plugin", JIP_VERSION),
     ("JIP LN NVSE", JIP_VERSION),
     ("ShowOffNVSE Plugin", 184.0),
     ("kNVSE", 37.0),
     ("JohnnyGuitarNVSE", 528.0),
     ("MCM Extensions", 1.0),
-    ("lStewieAl's Tweaks", 941.0),
+    ("lStewieAl's Tweaks", 960.0),
     ("ttw_nvse", 1.0),
     ("UI Organizer Plugin", 230.0),
     ("itr-nvse", 108.0),
+    ("yUI", 140.0),
+    ("Improved Console", 3.0),
 ];
 
 impl Vm<'_, '_> {

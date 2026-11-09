@@ -94,6 +94,13 @@ fn root_of(r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Visuals) -> Op
     visuals.iter().filter(|(_, v, _)| v.0 == r).find(|(_, _, p)| p.is_none_or(|p| visuals.get(p.parent()).is_ok_and(|(_, v, _)| v.0 != r))).map(|(e, _, _)| e)
 }
 
+/// [`root_of`], and for the player its third-person body, which stands in first person
+/// too: the original's scripts read its skeleton's nodes in either view [observed: hnd3,
+/// `PlayerRef.GetNifScale "NeckController" 2` gave 1 in first person].
+fn root_for(r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Visuals, body: Option<&crate::player_body::PlayerBody>) -> Option<Entity> {
+    root_of(r, actors, visuals).or_else(|| if r == fnv_sim::FormId::PLAYER_REF.0 { body.and_then(|b| b.third_root()) } else { None })
+}
+
 /// The node entities under `root`, depth first, with their parent's index.
 fn walk(root: Entity, nodes: &NodeQuery) -> Vec<(Entity, Option<usize>)> {
     let mut out = Vec::new();
@@ -144,6 +151,7 @@ fn mirror(
     mut commands: Commands,
     mut mem: Local<Memory>,
     (data, drawn, mut assets): Materials,
+    body: Option<Res<crate::player_body::PlayerBody>>,
 ) {
     let Memory { logged, held, tables, materials, owned } = &mut *mem;
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
@@ -152,7 +160,7 @@ fn mirror(
         let r = match &edit {
             SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Material { r, .. } => *r,
         };
-        let Some(root) = root_of(r.0, &actors, &visuals) else { continue };
+        let Some(root) = root_for(r.0, &actors, &visuals, body.as_deref()) else { continue };
         let rig = rig_names(r.0, &actors);
         match edit {
             // A transform a script sets holds over the animation, frame after frame
@@ -234,7 +242,7 @@ fn mirror(
     // The held transforms, over this frame's pose.
     let keys: Vec<(u32, String)> = held.keys().cloned().collect();
     for (r, node) in keys {
-        let Some(root) = root_of(r, &actors, &visuals) else { continue };
+        let Some(root) = root_for(r, &actors, &visuals, body.as_deref()) else { continue };
         let rig = rig_names(r, &actors);
         let h = held[&(r, node.clone())];
         if let Some(mut t) = find(root, &node, &nodes, &rig).and_then(|e| nodes.get_mut(e).ok()) {
@@ -252,7 +260,7 @@ fn mirror(
     // The trees of the references scripts asked about.
     let watched: Vec<FormId> = rt.game.scene.watched().collect();
     for r in watched {
-        let Some(root) = root_of(r.0, &actors, &visuals) else {
+        let Some(root) = root_for(r.0, &actors, &visuals, body.as_deref()) else {
             if logged.insert(r.0) {
                 info!("nif mirror: {:08X} watched, not drawn", r.0);
             }

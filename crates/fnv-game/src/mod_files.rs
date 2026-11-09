@@ -448,7 +448,27 @@ fn ini_path(g: &Game, file: Option<&str>) -> String {
         }
     };
     let f = if f.to_ascii_lowercase().ends_with(".ini") { f } else { format!("{f}.ini") };
-    format!("Config\\{f}")
+    collapse(&format!("Config\\{f}"))
+}
+
+/// A Data-relative path with `.` and `..` worked out: `Config\..\NVSE\Plugins\x.ini` is
+/// `NVSE\Plugins\x.ini` [observed: hnd3, Modern Minimap's `GetINIFloat "Main:iResScale"
+/// "..\NVSE\Plugins\HighResLocalMaps.ini"` read the file there]. A path that climbs
+/// above Data is left as it is, for the file checks to refuse.
+fn collapse(p: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for c in p.split('\\') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return p.to_string();
+                }
+            }
+            c => parts.push(c),
+        }
+    }
+    parts.join("\\")
 }
 
 /// `Section:Key` with ":", "/" or "\" between [observed: all three work], lower case.

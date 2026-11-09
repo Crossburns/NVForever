@@ -943,7 +943,8 @@ end",
 }
 
 /// Tale of Two Wastelands' start-up checks pass for the plugins built into the engine:
-/// Stewie's Tweaks at TTW's minimum 941 and its own ttw_nvse (ext-version.md §5).
+/// Stewie's Tweaks at 960 (High and Dry's minimum, above TTW's 941) and its own ttw_nvse
+/// (ext-version.md §5).
 #[test]
 fn ttws_plugin_checks_find_the_plugins_built_in() {
     let h = run(
@@ -956,7 +957,7 @@ let t := IsPluginInstalled \"ttw_nvse\"
 let u := IsPluginInstalled \"Not A Plugin\"
 end",
     );
-    assert_eq!(h.0[&1], Value::Num(941.0));
+    assert_eq!(h.0[&1], Value::Num(960.0));
     assert_eq!(h.0[&2], Value::Num(1.0));
     assert_eq!(h.0[&3], Value::Num(0.0));
 }

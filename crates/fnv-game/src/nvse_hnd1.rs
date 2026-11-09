@@ -132,6 +132,36 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             };
             return crate::nvse::call(g, _ctx, "getweaponhasscope", None, &[XVal::Ref(w)]);
         }
+        // `actorBase`: its factions, the records' list with the player's changes for the
+        // player's base [observed: hnd3, the player's base 22, DocMitchell's 3 in the save;
+        // hypothesis: the run-time changes are what make the player's 22].
+        "getfactions" => {
+            let Some(base) = form(args, 0) else { return Some(Ok(XVal::Num(0.0))) };
+            let mut out: Vec<FormId> = g.data.actors.get(&base).map(|a| a.factions.iter().map(|(f, _)| *f).collect()).unwrap_or_default();
+            if base == FormId::PLAYER_BASE {
+                if let Some(e) = g.extra.get(&FormId::PLAYER_REF) {
+                    for (f, rank) in &e.factions {
+                        out.retain(|x| x != f);
+                        if *rank >= 0 {
+                            out.push(*f);
+                        }
+                    }
+                }
+            }
+            let items = out.into_iter().map(|f| XVal::Ref(f.0)).collect();
+            list_or_zero(g, items)
+        }
+        // yUI's item traits (`trait [form]`): what ySISetTrait gave, else "" [hypothesis:
+        // ySI's own sorting tags are not read].
+        "ysigettrait" => {
+            let key = (text(args, 0).to_ascii_lowercase(), form(args, 1).map_or(0, |f| f.0));
+            XVal::Str(g.gaps.hnd.ysi_traits.get(&key).cloned().unwrap_or_default())
+        }
+        "ysisettrait" => {
+            let key = (text(args, 0).to_ascii_lowercase(), form(args, 2).map_or(0, |f| f.0));
+            g.gaps.hnd.ysi_traits.insert(key, text(args, 1));
+            XVal::Num(1.0)
+        }
         _ => match string_maps(g, name, args) {
             Some(v) => v,
             None => return None,
@@ -148,6 +178,8 @@ pub struct HndState {
     pub string_maps: std::collections::BTreeMap<String, Vec<(String, XVal)>>,
     /// Where AuxStringMapArrayGetNext goes on from, per map.
     pub cursors: std::collections::HashMap<String, usize>,
+    /// yUI's traits set by ySISetTrait: (trait, form) -> value.
+    pub ysi_traits: std::collections::HashMap<(String, u32), String>,
 }
 
 fn text(args: &[XVal], k: usize) -> String {

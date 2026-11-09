@@ -445,3 +445,7 @@ NVForever's own compiler. Hooks for ESP scripts are a third option.
   stops with "ITR 1.0.8+" though the ITR calls it makes after the check are built
   (`crate::vm::jip::PLUGINS`). *If you rule otherwise:* those mods show their requirement
   message boxes again and stay off.
+- **Stewie's Tweaks at 9.60 (was 9.41), yUI at 1.40, Improved Console at 3** (2026-11-09),
+  on the same rule: 9.60 is the most High and Dry's mods ask (TTW's 941 still met); ySI
+  stops without yUI 1.40 (its two functions are built); one mod asks whether Improved
+  Console is installed. *If you rule otherwise:* those mods' requirement boxes come back.
