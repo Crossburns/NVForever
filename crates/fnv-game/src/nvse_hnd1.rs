@@ -100,7 +100,154 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                 XVal::Num(code.unwrap_or(0.0))
             }
         }
-        _ => return None,
+        _ => match string_maps(g, name, args) {
+            Some(v) => v,
+            None => return None,
+        },
     };
     Some(Ok(v))
+}
+
+/// ShowOff's aux string maps: by name, keys in the order first set. Names and keys ignore
+/// case [observed: hnd2, `GetFloat "NVFPROBE" "K1"` read what `"nvfProbe" "k1"` set].
+/// Kept for the session [hypothesis: whether the original saves them is open].
+#[derive(Debug, Default)]
+pub struct HndState {
+    pub string_maps: std::collections::BTreeMap<String, Vec<(String, XVal)>>,
+    /// Where AuxStringMapArrayGetNext goes on from, per map.
+    pub cursors: std::collections::HashMap<String, usize>,
+}
+
+fn text(args: &[XVal], k: usize) -> String {
+    match args.get(k) {
+        Some(XVal::Str(s)) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+/// The element type code, as JIP's aux variables give them [hypothesis for ShowOff]:
+/// 0 none, 1 number, 2 form, 4 string.
+fn type_code(v: Option<&XVal>) -> f64 {
+    match v {
+        Some(XVal::Num(_)) => 1.0,
+        Some(XVal::Ref(_)) => 2.0,
+        Some(XVal::Str(_)) => 4.0,
+        _ => 0.0,
+    }
+}
+
+fn pair(g: &mut Game, k: &str, v: &XVal) -> XVal {
+    let entries = vec![(XKey::Str("key".into()), XVal::Str(k.to_string())), (XKey::Str("value".into()), v.clone())];
+    XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
+}
+
+/// ShowOff's AuxStringMapArray… family, `None` for any other name [observed: hnd2 for get,
+/// set, missing keys, types, SetFromArray and Destroy; the rest from the names and the
+/// parameter types the original lists, hypothesis].
+pub(crate) fn string_maps(g: &mut Game, name: &str, args: &[XVal]) -> Option<XVal> {
+    let op = name.strip_prefix("auxstringmaparray").or_else(|| name.strip_prefix("auxstringmap"))?;
+    let map = text(args, 0).to_ascii_lowercase();
+    let key = text(args, 1);
+    let lkey = key.to_ascii_lowercase();
+    let get = |g: &Game| g.gaps.hnd.string_maps.get(&map).and_then(|m| m.iter().find(|(k, _)| k.to_ascii_lowercase() == lkey)).map(|(_, v)| v.clone());
+    let set = |g: &mut Game, v: XVal| {
+        let m = g.gaps.hnd.string_maps.entry(map.clone()).or_default();
+        match m.iter_mut().find(|(k, _)| k.to_ascii_lowercase() == lkey) {
+            Some(e) => e.1 = v,
+            None => m.push((key.clone(), v)),
+        }
+    };
+    Some(match op {
+        // A missing key, or one holding another type, reads 0 / "" / none [observed: hnd2].
+        "getfloat" | "getflt" => match get(g) {
+            Some(XVal::Num(x)) => XVal::Num(x),
+            _ => XVal::Num(0.0),
+        },
+        "getstring" | "getstr" => match get(g) {
+            Some(XVal::Str(s)) => XVal::Str(s),
+            _ => XVal::Str(String::new()),
+        },
+        "getref" => match get(g) {
+            Some(XVal::Ref(r)) => XVal::Ref(r),
+            _ => XVal::Ref(0),
+        },
+        "getvaluetype" => XVal::Num(type_code(get(g).as_ref())),
+        // Setters return 0 [observed: hnd2, SetFloat].
+        "setfloat" | "setflt" => {
+            set(g, XVal::Num(match args.get(2) {
+                Some(XVal::Num(x)) => *x,
+                _ => 0.0,
+            }));
+            XVal::Num(0.0)
+        }
+        "setstring" | "setstr" => {
+            set(g, XVal::Str(text(args, 2)));
+            XVal::Num(0.0)
+        }
+        "setref" => {
+            set(g, XVal::Ref(form(args, 2).map_or(0, |f| f.0)));
+            XVal::Num(0.0)
+        }
+        "erasekey" => {
+            let had = g.gaps.hnd.string_maps.get_mut(&map).map(|m| {
+                let n = m.len();
+                m.retain(|(k, _)| k.to_ascii_lowercase() != lkey);
+                n != m.len()
+            });
+            XVal::Num(f64::from(u8::from(had.unwrap_or(false))))
+        }
+        // Destroy returned 0 for a map it emptied and for none; reads after it give 0
+        // [observed: hnd2].
+        "destroy" => {
+            g.gaps.hnd.string_maps.remove(&map);
+            g.gaps.hnd.cursors.remove(&map);
+            XVal::Num(0.0)
+        }
+        "getsize" | "size" => XVal::Num(g.gaps.hnd.string_maps.get(&map).map_or(0, |m| m.len()) as f64),
+        "getkeys" | "keys" => {
+            let keys: Vec<XVal> = g.gaps.hnd.string_maps.get(&map).map(|m| m.iter().map(|(k, _)| XVal::Str(k.clone())).collect()).unwrap_or_default();
+            let entries = keys.into_iter().enumerate().map(|(i, k)| (XKey::Num(i as f64), k)).collect();
+            XVal::Array(g.ext.new_array(ArrayKind::List, entries))
+        }
+        "getasarray" | "getasarr" => {
+            let entries: Vec<(XKey, XVal)> = g.gaps.hnd.string_maps.get(&map).map(|m| m.iter().map(|(k, v)| (XKey::Str(k.clone()), v.clone())).collect()).unwrap_or_default();
+            XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
+        }
+        // The map's values from a string map array (keys and values copied) [observed:
+        // hnd2, `ar_Map "a"::1 "b"::"x"` read back 1 and "x"].
+        "setfromarray" | "setfromarr" => {
+            let XVal::Array(id) = args.get(1).cloned().unwrap_or(XVal::Num(0.0)) else { return Some(XVal::Num(0.0)) };
+            let items: Vec<(String, XVal)> = g.ext.array(id).map(|a| a.entries.iter().filter_map(|(k, v)| match k {
+                XKey::Str(s) => Some((s.clone(), v.clone())),
+                _ => None,
+            }).collect()).unwrap_or_default();
+            let m = g.gaps.hnd.string_maps.entry(map.clone()).or_default();
+            for (k, v) in items {
+                let lk = k.to_ascii_lowercase();
+                match m.iter_mut().find(|(x, _)| x.to_ascii_lowercase() == lk) {
+                    Some(e) => e.1 = v,
+                    None => m.push((k, v)),
+                }
+            }
+            XVal::Num(0.0)
+        }
+        "getfirst" | "first" | "getnext" | "next" => {
+            let first = op == "getfirst" || op == "first";
+            let at = if first { 0 } else { g.gaps.hnd.cursors.get(&map).copied().unwrap_or(0) };
+            let item = g.gaps.hnd.string_maps.get(&map).and_then(|m| m.get(at)).cloned();
+            g.gaps.hnd.cursors.insert(map.clone(), at + 1);
+            match item {
+                Some((k, v)) => pair(g, &k, &v),
+                None => XVal::Num(0.0),
+            }
+        }
+        // Drops the entries whose form is gone; nothing here goes away [hypothesis].
+        "validatevalues" | "validatevals" => XVal::Num(0.0),
+        "getall" => {
+            let names: Vec<XVal> = g.gaps.hnd.string_maps.keys().map(|k| XVal::Str(k.clone())).collect();
+            let entries = names.into_iter().enumerate().map(|(i, k)| (XKey::Num(i as f64), k)).collect();
+            XVal::Array(g.ext.new_array(ArrayKind::List, entries))
+        }
+        _ => return None,
+    })
 }
