@@ -79,6 +79,10 @@ struct RemixState {
     textures: HashSet<u64>,
     failed_textures: HashSet<u64>,
     material_wait: HashMap<UntypedAssetId, u64>,
+    /// Land base meshes drawn with their layers' terrain material, and the layer meshes
+    /// that material holds.
+    terrain: HashMap<AssetId<Mesh>, ffi::MeshHandle>,
+    layered: HashSet<AssetId<Mesh>>,
     materials: HashMap<UntypedAssetId, ffi::MaterialHandle>,
     meshes: HashMap<(AssetId<Mesh>, UntypedAssetId), ffi::MeshHandle>,
     lights: HashMap<Entity, (u64, ffi::LightHandle)>,
@@ -225,6 +229,8 @@ type ShapeParts<M> = (
     &'static ViewVisibility,
     Option<&'static bevy::mesh::skinning::SkinnedMesh>,
     Option<&'static RenderLayers>,
+    Has<crate::terrain::LandMesh>,
+    Option<&'static ChildOf>,
 );
 
 /// The shapes of every material type built on Bevy's standard material: the NIF
@@ -253,6 +259,9 @@ struct ShapeIn<'a> {
     vis: bool,
     skinned: Option<&'a bevy::mesh::skinning::SkinnedMesh>,
     layers: Option<&'a RenderLayers>,
+    /// A mesh of a cell's land (its base or a blended texture layer), and its cell.
+    land: bool,
+    parent: Option<Entity>,
 }
 
 impl<'w, 's> Shapes<'w, 's> {
@@ -262,9 +271,9 @@ impl<'w, 's> Shapes<'w, 's> {
             m: &'a Assets<bevy::pbr::ExtendedMaterial<StandardMaterial, E>>,
             out: &mut Vec<ShapeIn<'a>>,
         ) {
-            for (entity, mesh, mat, gt, vis, skinned, layers) in q {
+            for (entity, mesh, mat, gt, vis, skinned, layers, land, parent) in q {
                 let Some(material) = m.get(mat.id()) else { continue };
-                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), skinned, layers });
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), skinned, layers, land, parent: parent.map(|p| p.parent()) });
             }
         }
         let mut out = Vec::new();
@@ -391,7 +400,13 @@ fn frame(
         }
     }
     let mut own = 0u32;
-    for ShapeIn { entity, mesh, mat, base, gt, vis, skinned, layers } in shapes.all() {
+    let all = shapes.all();
+    terrain_materials(st, &cpu, &all);
+    for ShapeIn { entity, mesh, mat, base, gt, vis, skinned, layers, land, .. } in all {
+        // Land: a blended layer already in its base's terrain material is not drawn alone.
+        if land && st.layered.contains(&mesh) {
+            continue;
+        }
         let layers = layers.cloned().unwrap_or_default();
         // In first person, also anything at the eye that is not the first-person arms
         // rig (the face's parts the rig's lists miss) [design: the camera sits inside the
@@ -437,7 +452,7 @@ fn frame(
             continue;
         }
         let key = (mesh, mat);
-        let handle = match st.meshes.get(&key) {
+        let handle = match st.terrain.get(&mesh).or_else(|| st.meshes.get(&key)) {
             Some(h) => *h,
             None => {
                 let Some(data) = cpu.by_id.get(&mesh).cloned() else {
@@ -694,6 +709,8 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         textures: HashSet::new(),
         failed_textures: HashSet::new(),
         material_wait: HashMap::new(),
+        terrain: HashMap::new(),
+        layered: HashSet::new(),
         materials: HashMap::new(),
         meshes: HashMap::new(),
         lights: HashMap::new(),
@@ -770,4 +787,124 @@ fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, w
         }
     });
     commands.insert_resource(UiOverlay { size: (w, h), pixels });
+}
+
+/// Each land quadrant's base mesh with the blended layer meshes over it (same vertex grid:
+/// NVForever's terrain.rs builds a layer as the base's grid with the layer's opacity in the
+/// vertex alpha) as one mesh with a terrain-layers material: up to eight layers (the base
+/// and the top seven), weighted per vertex as the layers composite over each other, the
+/// weights in two RGBA textures over the quadrant [documented: remix_c.h,
+/// MaterialInfoTerrainLayersEXT]. Made once a quadrant's textures are all in Remix.
+fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) {
+    let mut by_cell: HashMap<Entity, Vec<usize>> = HashMap::new();
+    for (i, s) in all.iter().enumerate() {
+        if s.land {
+            if let Some(p) = s.parent {
+                by_cell.entry(p).or_default().push(i);
+            }
+        }
+    }
+    let tex = |st: &RemixState, h: &Option<Handle<Image>>| h.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
+    for shapes in by_cell.values() {
+        for &bi in shapes {
+            let b = &all[bi];
+            if matches!(b.base.alpha_mode, AlphaMode::Blend) || st.terrain.contains_key(&b.mesh) {
+                continue;
+            }
+            let Some(base) = cpu.by_id.get(&b.mesh) else { continue };
+            let n = (base.verts.len() as f32).sqrt().round() as usize;
+            if n < 2 || n * n != base.verts.len() {
+                continue;
+            }
+            let first = base.verts[0].position;
+            let layers: Vec<(&ShapeIn<'_>, &CpuMesh)> = shapes
+                .iter()
+                .map(|&li| &all[li])
+                .filter(|l| matches!(l.base.alpha_mode, AlphaMode::Blend))
+                .filter_map(|l| cpu.by_id.get(&l.mesh).map(|d| (l, d.as_ref())))
+                .filter(|(_, d)| d.verts.len() == base.verts.len() && d.verts[0].position == first)
+                .collect();
+            if layers.is_empty() {
+                continue;
+            }
+            // The top seven layers over the base.
+            let top = &layers[layers.len().saturating_sub(ffi::TERRAIN_MAX_LAYERS - 1)..];
+            let Some(base_albedo) = tex(st, &b.base.base_color_texture) else { continue };
+            let mut list: Vec<(u64, Option<u64>)> = vec![(base_albedo, tex(st, &b.base.normal_map_texture))];
+            let mut ok = true;
+            for (l, _) in top {
+                match tex(st, &l.base.base_color_texture) {
+                    Some(a) => list.push((a, tex(st, &l.base.normal_map_texture))),
+                    None => ok = false,
+                }
+            }
+            if !ok {
+                continue;
+            }
+            // Weights: layer k shows by its alpha times what the layers above leave.
+            let mut w = [vec![0u8; n * n * 4], vec![0u8; n * n * 4]];
+            for v in 0..n * n {
+                let alpha: Vec<f32> = top.iter().map(|(_, d)| (d.verts[v].color >> 24) as f32 / 255.0).collect();
+                let mut above = 1.0f32;
+                let mut weights = vec![0.0f32; alpha.len() + 1];
+                for k in (0..alpha.len()).rev() {
+                    weights[k + 1] = alpha[k] * above;
+                    above *= 1.0 - alpha[k];
+                }
+                weights[0] = above;
+                for (k, wk) in weights.iter().enumerate() {
+                    w[k / 4][v * 4 + k % 4] = (wk.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                }
+            }
+            let hashes = [hash_of(&(b.mesh, 0u8)), hash_of(&(b.mesh, 1u8))];
+            for (h, data) in hashes.iter().zip(w.iter()) {
+                let t = nvf_remix::TextureData { hash: *h, width: n as u32, height: n as u32, mips: 1, format: ffi::FORMAT_R8G8B8A8_UNORM, data, vk_format: 0, encoding: 0 };
+                if st.remix.create_texture(&t).is_err() {
+                    st.errors += 1;
+                    ok = false;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            // Vertex (c, r) at weight texel centre ((c + 1/2) / n, (r + 1/2) / n): the vertex
+            // grid's texcoords mapped linearly onto the weight texture.
+            let uv0 = base.verts[0].texcoord;
+            let uv1 = base.verts[n * n - 1].texcoord;
+            let axis = |a: usize| {
+                let d = (uv1[a] - uv0[a]) / (n - 1) as f32;
+                if d.abs() < 1e-9 {
+                    (1.0, 0.0)
+                } else {
+                    let scale = 1.0 / (n as f32 * d);
+                    (scale, 0.5 / n as f32 - uv0[a] * scale)
+                }
+            };
+            let (su, ou) = axis(0);
+            let (sv, ov) = axis(1);
+            let c = b.base.base_color.to_linear();
+            let desc = nvf_remix::MaterialDesc {
+                hash: hash_of(&(b.mesh, "terrain")),
+                albedo: Some(base_albedo),
+                albedo_constant: [c.red, c.green, c.blue],
+                opacity: 1.0,
+                roughness: b.base.perceptual_roughness,
+                metallic: b.base.metallic,
+                ..Default::default()
+            };
+            let Ok(mat) = st.remix.create_terrain_material(&desc, &list, hashes, [su, sv], [ou, ov]) else {
+                st.errors += 1;
+                continue;
+            };
+            match st.remix.create_mesh(hash_of(&(b.mesh, "terrain-mesh")), &base.verts, &base.idx, mat) {
+                Ok(h) => {
+                    st.terrain.insert(b.mesh, h);
+                    for (l, _) in top {
+                        st.layered.insert(l.mesh);
+                    }
+                }
+                Err(_) => st.errors += 1,
+            }
+        }
+    }
 }

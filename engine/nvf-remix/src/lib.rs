@@ -185,6 +185,18 @@ impl Remix {
     }
 
     pub fn create_material(&self, m: &MaterialDesc) -> Result<MaterialHandle, Error> {
+        self.create_material_layered(m, None)
+    }
+
+    /// A terrain material: `layers` (albedo, normal texture hashes, bottom first) blended
+    /// per hit by the two RGBA weight textures `weights` (layers 0-3, 4-7), read at
+    /// `uv × scale + offset` [documented: remix_c.h, MaterialInfoTerrainLayersEXT].
+    pub fn create_terrain_material(&self, m: &MaterialDesc, layers: &[(u64, Option<u64>)], weights: [u64; 2], scale: [f32; 2], offset: [f32; 2]) -> Result<MaterialHandle, Error> {
+        self.create_material_layered(m, Some((layers, weights, scale, offset)))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn create_material_layered(&self, m: &MaterialDesc, terrain: Option<(&[(u64, Option<u64>)], [u64; 2], [f32; 2], [f32; 2])>) -> Result<MaterialHandle, Error> {
         let Some(f) = self.api.CreateMaterial else { return Err(Error { call: "CreateMaterial", code: -1 }) };
         let none = [0u16];
         let albedo = m.albedo.map(texture_ref);
@@ -221,6 +233,33 @@ impl Remix {
             dlssControlMaskToneStrength: 0.0,
             dlssControlMaskStructuralStrength: 0.0,
         };
+        // The terrain extension's strings, kept alive for the call.
+        let layer_refs: Vec<(Vec<u16>, Option<Vec<u16>>)> = terrain.map(|t| t.0.iter().take(TERRAIN_MAX_LAYERS).map(|(a, n)| (texture_ref(*a), n.map(texture_ref))).collect()).unwrap_or_default();
+        let weight_refs: Vec<Vec<u16>> = terrain.map(|t| t.1.iter().map(|w| texture_ref(*w)).collect()).unwrap_or_default();
+        let mut layered = terrain.map(|(_, _, scale, offset)| {
+            let mut albedo = [none.as_ptr(); TERRAIN_MAX_LAYERS];
+            let mut normal = [none.as_ptr(); TERRAIN_MAX_LAYERS];
+            for (i, (a, n)) in layer_refs.iter().enumerate() {
+                albedo[i] = a.as_ptr();
+                normal[i] = n.as_ref().map_or(none.as_ptr(), |w| w.as_ptr());
+            }
+            MaterialInfoTerrainLayersEXT {
+                sType: ST_MATERIAL_INFO_TERRAIN_LAYERS_EXT,
+                pNext: std::ptr::null_mut(),
+                layerCount: layer_refs.len() as u32,
+                albedoTextures: albedo,
+                normalTextures: normal,
+                weightTextures: [weight_refs[0].as_ptr(), weight_refs[1].as_ptr()],
+                tintTexture: none.as_ptr(),
+                weightUvScale: Float2D { x: scale[0], y: scale[1] },
+                weightUvOffset: Float2D { x: offset[0], y: offset[1] },
+                normalsRgbTangentSpace: 1,
+                heightTextures: [none.as_ptr(); TERRAIN_MAX_LAYERS],
+            }
+        });
+        if let Some(l) = layered.as_mut() {
+            opaque.pNext = (l as *mut MaterialInfoTerrainLayersEXT).cast();
+        }
         let info = MaterialInfo {
             sType: ST_MATERIAL_INFO,
             pNext: (&mut opaque as *mut MaterialInfoOpaqueEXT).cast(),

@@ -44,6 +44,8 @@ pub const ST_STARTUP_INFO: u32 = 22;
 pub const ST_PRESENT_INFO: u32 = 23;
 pub const ST_TEXTURE_INFO: u32 = 25;
 pub const ST_TEXTURE_INFO_HOST_IMPORT_EXT: u32 = 33;
+pub const ST_MATERIAL_INFO_TERRAIN_LAYERS_EXT: u32 = 0x7F00_0001;
+pub const TERRAIN_MAX_LAYERS: usize = 8;
 
 // REMIXAPI_TEXTURE_ENCODING_*
 pub const ENCODING_NONE: u32 = 0;
@@ -166,6 +168,23 @@ pub struct MaterialInfoOpaqueEXT {
     pub dlssControlMaskIntensity: f32,
     pub dlssControlMaskToneStrength: f32,
     pub dlssControlMaskStructuralStrength: f32,
+}
+
+/// Remix Plus: up to eight terrain layers blended per hit by two RGBA weight textures,
+/// chained after the opaque extension.
+#[repr(C)]
+pub struct MaterialInfoTerrainLayersEXT {
+    pub sType: u32,
+    pub pNext: *mut c_void,
+    pub layerCount: u32,
+    pub albedoTextures: [Path; TERRAIN_MAX_LAYERS],
+    pub normalTextures: [Path; TERRAIN_MAX_LAYERS],
+    pub weightTextures: [Path; 2],
+    pub tintTexture: Path,
+    pub weightUvScale: Float2D,
+    pub weightUvOffset: Float2D,
+    pub normalsRgbTangentSpace: Bool,
+    pub heightTextures: [Path; TERRAIN_MAX_LAYERS],
 }
 
 #[repr(C)]

@@ -25,6 +25,12 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   sphere lights, directional lights as distant lights, in the game's light scale
   (Bevy's values over `sky::light_unit`); then Present. Additive shapes (light shafts,
   glows) are not sent.
+- **Terrain.** A land quadrant's base mesh and its blended layer meshes (same vertex
+  grid, the layer's opacity in the vertex alpha) go as one mesh with Remix Plus's
+  terrain-layers material: the base and the top seven layers, weighted per vertex as the
+  layers composite over each other, the weights in two RGBA textures over the quadrant.
+- **Trees and grass.** Every material type built on Bevy's standard material (leaf,
+  bark, billboard, grass) goes through the same path as the NIF material.
 - **HUD and menus.** A 2D camera, the default UI camera, draws Bevy's interface into
   an RGBA image with a transparent background; a GPU readback of it each frame goes to
   Remix's screen overlay (`DrawScreenOverlay`), over the traced image. Menus with their
@@ -42,8 +48,7 @@ they are (`DEFAULT_MODS_DIR`). NVForever writes nothing into the install or the 
 
 ## Not yet
 
-- Terrain layers (only each chunk's base texture), water, sky meshes, grass and tree
-  materials (their own material types), particles.
+- Water, NVForever's sky meshes (Remix draws its own sky), particles.
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.
 
