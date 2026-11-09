@@ -1,6 +1,6 @@
 {
   "format": "fnv.script.encodings/1",
-  "note": "Bytecode parameter encodings that are not the default tagged value, and the spellings of enumerated codes. Observed in the ten shipped masters by lining up compiled calls with their source (docs/spec-notes/scripts.md section 2.4); names are the ones shipped source uses. anim_group: the codes past those the masters show were lined up the same way in High and Dry's mods (PlayGroup, IsAnimPlaying, kNVSE's IsAnimPlayingAlt and PlayGroupAlt; each name with one code in every call, 2026-11-09). Functions not listed here: every parameter is a tagged value (observed for every other function shipped scripts call). xedit_types: the rule used for functions shipped scripts never call [hypothesis: same encoding as the observed functions with that xEdit parameter type].",
+  "note": "Bytecode parameter encodings that are not the default tagged value, and the spellings of enumerated codes. Observed in the ten shipped masters by lining up compiled calls with their source (docs/spec-notes/scripts.md section 2.4); names are the ones shipped source uses. anim_group: the codes past those the masters show were lined up the same way in High and Dry's mods (PlayGroup, IsAnimPlaying, kNVSE's IsAnimPlayingAlt and PlayGroupAlt, JIP's SetOnPlayGroupEventHandler; each name with one code in every call, 2026-11-09). Functions not listed here: every parameter is a tagged value (observed for every other function shipped scripts call). xedit_types: the rule used for functions shipped scripts never call [hypothesis: same encoding as the observed functions with that xEdit parameter type].",
   "functions": {
     "0x1004": {"name": "Rotate", "params": ["axis", "value"]},
     "0x1006": {"name": "GetPos", "params": ["axis"]},
@@ -87,11 +87,12 @@
     "anim_group": {
       "0": "Idle", "1": "DynamicIdle", "2": "SpecialIdle", "3": "Forward", "4": "Backward", "5": "Left",
       "6": "Right", "7": "FastForward", "8": "FastBackward", "9": "FastLeft", "10": "FastRight", "15": "TurnLeft",
-      "16": "TurnRight", "17": "Aim", "20": "AimIS", "24": "Equip", "25": "Unequip", "50": "Attack5",
-      "62": "Attack7", "93": "AttackForwardPower", "97": "AttackCustom1Power", "98": "AttackCustom2Power", "99": "AttackCustom3Power", "100": "AttackCustom4Power",
-      "173": "ReloadWStart", "174": "ReloadXStart", "175": "ReloadYStart", "176": "ReloadZStart", "196": "ReloadW", "197": "ReloadX",
-      "198": "ReloadY", "199": "ReloadZ", "207": "JamH", "223": "Stagger", "226": "pipboy", "227": "JumpStart",
-      "228": "JumpLoop", "236": "JumpLoopForward", "241": "JumpLandForward"
+      "16": "TurnRight", "17": "Aim", "20": "AimIS", "23": "Holster", "24": "Equip", "25": "Unequip",
+      "50": "Attack5", "62": "Attack7", "93": "AttackForwardPower", "97": "AttackCustom1Power", "98": "AttackCustom2Power", "99": "AttackCustom3Power",
+      "100": "AttackCustom4Power", "173": "ReloadWStart", "174": "ReloadXStart", "175": "ReloadYStart", "176": "ReloadZStart", "196": "ReloadW",
+      "197": "ReloadX", "198": "ReloadY", "199": "ReloadZ", "207": "JamH", "223": "Stagger", "226": "pipboy",
+      "227": "JumpStart", "228": "JumpLoop", "229": "JumpLand", "236": "JumpLoopForward", "241": "JumpLandForward", "242": "JumpLandBackward",
+      "243": "JumpLandLeft", "244": "JumpLandRight"
     },
     "sex": {"0": "Male", "1": "Female"},
     "misc_stat": {

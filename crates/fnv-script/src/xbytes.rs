@@ -35,6 +35,14 @@ std::thread_local! {
     /// is inside lambdas' own scripts.
     static LAMBDAS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// The unit's own locals the expressions name as string (2) or array (3) variables.
+    static KINDS: std::cell::RefCell<std::collections::BTreeMap<u16, u8>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// The string and array locals the unit's expressions named, by index, when the reading
+/// left its outermost unit (`decode::decode`).
+pub(crate) fn take_kinds() -> std::collections::BTreeMap<u16, u8> {
+    KINDS.with(|k| std::mem::take(&mut *k.borrow_mut()))
 }
 
 /// Called by `decode::decode` around each unit: a unit's lambdas are numbered from 0.
@@ -42,13 +50,18 @@ pub(crate) fn enter() {
     DEPTH.with(|d| {
         if d.get() == 0 {
             LAMBDAS.with(|l| l.set(0));
+            KINDS.with(|k| k.borrow_mut().clear());
         }
         d.set(d.get() + 1);
     });
 }
 
-pub(crate) fn leave() {
-    DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+/// Leaves a unit's reading; true when it was the outermost one.
+pub(crate) fn leave() -> bool {
+    DEPTH.with(|d| {
+        d.set(d.get().saturating_sub(1));
+        d.get() == 0
+    })
 }
 
 /// `Call`'s opcode: its bytes hold the function, then its arguments (ext-bytecode.md §1).
@@ -102,6 +115,9 @@ fn oper(b: u8) -> Option<Oper> {
         0x21 => Unary(XUnary::Numericize),
         0x22 => Unary(XUnary::Unbox),
         0x24 => Bin(XOp::Pair),
+        // `&` [observed: Famine.esp `Call PWBFamineFnLootRemove, &rActorRef, 0, …`, the
+        // only use: V of rActorRef, then 25].
+        0x25 => Unary(XUnary::Box),
         0x28 => CallOn,
         _ => return None,
     })
@@ -152,6 +168,14 @@ fn items(table: &FunctionTable, b: &[u8]) -> Option<Item> {
                 let ty = r.u8()?;
                 let on = r.u16()?;
                 let index = r.u16()?;
+                // The type byte: 0 float, 1 int, 2 string_var, 3 array_var, 4 ref
+                // [observed: the High and Dry corpus against each unit's declarations,
+                // ext-bytecode.md §6].
+                if on == 0 && (ty == 2 || ty == 3) {
+                    KINDS.with(|k| {
+                        k.borrow_mut().insert(index, ty);
+                    });
+                }
                 let var = VarRef { on: (on != 0).then_some(RefIndex(on)), var: VarSlot::Local { index, letter: VarLetter::Float } };
                 st.push(Item::E(XExpr::Var { var, form: ty == 4 }));
             }

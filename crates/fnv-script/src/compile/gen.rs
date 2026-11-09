@@ -273,7 +273,11 @@ impl<'a> Gen<'a> {
                 let i = self.lambdas.len();
                 self.lambdas.push((names, body));
                 let rest = &l.text[l.text.find(')').map_or(l.text.len(), |p| p + 1)..];
-                let text = format!("{before}__lambda{i}{rest}");
+                // `SetOnMenuOpenEventHandler(begin function …` with no space before the
+                // bracket compiles in the original [observed: gl_AWR_Main.txt runs there]:
+                // the stand-in keeps a space from the name.
+                let gap = if before.ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') { " " } else { "" };
+                let text = format!("{before}{gap}__lambda{i}{rest}");
                 let merged = lex::Line { no: first.no, toks: lex::tokens(&text), text };
                 match open.last_mut() {
                     Some(o) => o.3.push(merged),
@@ -446,6 +450,14 @@ impl<'a> Gen<'a> {
         if name.len() == 8 && name.bytes().all(|b| b.is_ascii_hexdigit()) {
             let g = self.env.local_form(u32::from_str_radix(name, 16).ok()?)?;
             return Some(self.env.info(g).unwrap_or(FormInfo { form: g, sig: [0; 4] }));
+        }
+        // A shorter FormID without its leading zeros (`Player.AddPerk ced89`, 0x000CED89):
+        // the original takes it where a form goes [observed: syntax3, `GetType ced89`
+        // read 86, a perk]; only when it has a digit and names a form that exists, so a
+        // misspelt word stays an error.
+        if (1..8).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_hexdigit()) && name.bytes().any(|b| b.is_ascii_digit()) {
+            let g = self.env.local_form(u32::from_str_radix(name, 16).ok()?)?;
+            return self.env.info(g);
         }
         None
     }

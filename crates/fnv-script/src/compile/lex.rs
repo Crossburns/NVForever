@@ -272,7 +272,7 @@ pub fn xtokens(line: &str) -> Vec<XTok> {
             '{' => XKind::LBrace,
             '}' => XKind::RBrace,
             ',' => XKind::Comma,
-            '!' | '$' | '#' => XKind::Op,
+            '!' | '$' | '#' | '~' => XKind::Op,
             _ => XKind::Other,
         };
         out.push(XTok { kind, text: c.to_string(), sign: false });

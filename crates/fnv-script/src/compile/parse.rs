@@ -235,7 +235,10 @@ pub fn inline_decls(x: &mut Vec<XTok>) -> Vec<(DeclType, String)> {
     let mut decls = Vec::new();
     let mut i = 0;
     while i + 2 < x.len() {
-        let assigned = x[i + 2].kind == XKind::Op && [":=", "=", "<-"].contains(&x[i + 2].text.as_str())
+        // A compound assignment declares too, the variable keeping its value when it is
+        // already declared (`let float f *= (-1)` on a function's parameter) [observed:
+        // syntax3 in the original, f 2 read -2].
+        let assigned = x[i + 2].kind == XKind::Op && [":=", "=", "<-", "+=", "-=", "*=", "/="].contains(&x[i + 2].text.as_str())
             || i > 0 && x[i - 1].kind == XKind::Open && x[i + 2].kind == XKind::Close;
         match DeclType::from_word(&x[i].text.to_ascii_lowercase()) {
             Some(ty) if x[i].kind == XKind::Word && x[i + 1].kind == XKind::Word && assigned => {

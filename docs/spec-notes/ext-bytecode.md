@@ -130,6 +130,12 @@ its compiled quest script; GECK with xNVSE].
 So the variable list does not tell a string_var from an int, nor an array_var from a
 ref; only the source or the expressions' variable tokens (type 02 / 03) do.
 
+The `V` token's type byte across High and Dry's compiled scripts, against each unit's own
+declarations [observed: 2026-11-09, 22,000 tokens]: 0 float (3,225), 1 int or short
+(10,411), 2 string_var (3,308), 3 array_var (3,115), 4 ref (1,728); no token disagreed with
+its declaration but 2 ints written as 0. NVForever types a unit run from its bytes by
+these (a local the variable list does not name is added).
+
 ## 7. What the GECK refused (compile messages)
 
 - `let := 5`: "Missing required parameter 'expression' for parameter #'1'." and "Could not

@@ -1444,6 +1444,7 @@ impl Vm<'_, '_> {
                 match op {
                     XUnary::Neg => XVal::Num(-v.num()?),
                     XUnary::Not => XVal::Num(if v.truthy() { 0.0 } else { 1.0 }),
+                    XUnary::BitNot => XVal::Num(f64::from(!(v.num()? as i64 as u32))),
                     XUnary::Stringize => XVal::Str(self.text_of(&v)?),
                     XUnary::Numericize => match v {
                         XVal::Str(s) => XVal::Num(text_number(&s)),

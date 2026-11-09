@@ -1219,3 +1219,12 @@ fn an_aware_functions_argument_ends_at_a_comparison() {
     assert_eq!(lets("array_var a\nfloat f\nbegin GameMode\nlet f := Ar_Find 1 a == 5\nend"), ["(v2 Set= (Ar_Find(1 v1) Eq 5))"]);
     assert_eq!(lets("array_var a\nfloat f\nstring_var s\nbegin GameMode\nlet f := Ar_Find (s) (a) == 2\nend"), ["(v2 Set= (Ar_Find(v3 v1) Eq 2))"]);
 }
+
+#[test]
+fn bit_not_and_compound_inline_declarations() {
+    // [observed: syntax3 in the original] `255 & ~64` is 191; `let float f *= (-1)`
+    // declares f and multiplies it.
+    let l = lets("int i\nbegin GameMode\nlet i := 255 & ~64\nlet float f *= (-1)\nend");
+    assert_eq!(l[0], "(v1 Set= (255 BitAnd (BitNot 64)))");
+    assert!(l[1].contains("Mul="), "{}", l[1]);
+}

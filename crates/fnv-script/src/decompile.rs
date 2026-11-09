@@ -213,6 +213,7 @@ impl Decompiler<'_> {
                     XUnary::Unbox => "*",
                     XUnary::Box => "&",
                     XUnary::Not => "!",
+                    XUnary::BitNot => "~",
                 };
                 format!("({sym}{})", self.xexpr(e))
             }

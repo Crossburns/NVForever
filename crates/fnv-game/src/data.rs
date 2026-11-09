@@ -1945,8 +1945,25 @@ impl GameData {
         let compiled: Vec<Compiled> = all_units
             .into_par_iter()
             .map(|unit| {
+                let mut unit = unit;
                 let dec = decode(&unit.bytes, &d.table);
                 let raw = dec.report.raw_total();
+                // String and array locals as the bytes name them; source compiles keep
+                // their own types (`source_compile::apply`).
+                for v in &mut unit.variables {
+                    if let Some(k) = dec.var_kinds.get(&(v.index as u16)) {
+                        if matches!(v.ty, fnv_script::VarType::Int | fnv_script::VarType::FloatOrRef) {
+                            v.ty = fnv_script::VarType::Other((*k).to_string());
+                        }
+                    }
+                }
+                // A local the record's list does not name (its SCVR missing) [observed:
+                // Vanilla UI Plus.esp's quest script names 19 of 43].
+                for (&i, k) in &dec.var_kinds {
+                    if !unit.variables.iter().any(|v| v.index as u16 == i) {
+                        unit.variables.push(fnv_script::VarDecl { index: i.into(), name: String::new(), ty: fnv_script::VarType::Other((*k).to_string()) });
+                    }
+                }
                 Compiled::new(unit, dec.program, raw)
             })
             .collect();

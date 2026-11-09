@@ -78,6 +78,10 @@ impl Report {
 pub struct Decoded {
     pub program: Program,
     pub report: Report,
+    /// The locals the GECK's extender expressions name as `string_var` or `array_var`
+    /// (index -> "string_var" / "array_var"): the record's variable list can only say
+    /// Integer or FloatOrRef (ext-bytecode.md §6).
+    pub var_kinds: std::collections::BTreeMap<u16, &'static str>,
 }
 
 /// Little-endian reader over a byte slice that never panics.
@@ -711,8 +715,10 @@ impl Frame {
 /// Decode compiled script bytes.
 pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
     crate::xbytes::enter();
-    let d = decode_unit(bytes, table);
-    crate::xbytes::leave();
+    let mut d = decode_unit(bytes, table);
+    if crate::xbytes::leave() {
+        d.var_kinds = crate::xbytes::take_kinds().into_iter().map(|(i, t)| (i, if t == 2 { "string_var" } else { "array_var" })).collect();
+    }
     d
 }
 
@@ -919,5 +925,5 @@ fn decode_unit(bytes: &[u8], table: &FunctionTable) -> Decoded {
         }
     }
     c.report.statements = flats.len();
-    Decoded { program: prog, report: c.report }
+    Decoded { program: prog, report: c.report, var_kinds: Default::default() }
 }

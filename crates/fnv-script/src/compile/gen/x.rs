@@ -117,6 +117,7 @@ fn prefix(t: &XTok) -> Option<(XUnary, u8)> {
         "*" => (XUnary::Unbox, 25),
         "&" => (XUnary::Box, 25),
         "!" => (XUnary::Not, 27),
+        "~" => (XUnary::BitNot, 27),
         _ => return None,
     })
 }
@@ -594,7 +595,7 @@ impl Gen<'_> {
         // Outside an override block an argument is an operand, so what follows the name
         // (`Health + 50`) is not part of it.
         let single = p.peek().is_some_and(|t| matches!(t.kind, XKind::Word | XKind::Str))
-            && !p.peek2().is_some_and(|n| n.kind == XKind::LBracket || n.is(XKind::Op, "->"));
+            && !p.peek2().is_some_and(|n| n.kind == XKind::LBracket || n.is(XKind::Op, "->") || n.is(XKind::Op, "::"));
         // A variable where an enumeration's name goes (`player.GetAV iS`, iS holding an
         // actor-value code) is a value, read when the call runs [observed: Vanilla UI
         // Plus.esp compiled so in the GECK with xNVSE, ext-bytecode.md §5].

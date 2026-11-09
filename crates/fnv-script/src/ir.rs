@@ -402,6 +402,9 @@ pub enum XUnary {
     /// `&`: a one-element array.
     Box,
     Not,
+    /// `~`: the bits of a 32-bit unsigned number turned over [observed: syntax3 in the
+    /// original, `255 & ~64` 191, `~0` 4294967295].
+    BitNot,
 }
 
 /// `:=` and the compound assignments.
