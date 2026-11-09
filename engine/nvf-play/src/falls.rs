@@ -233,7 +233,7 @@ fn hurt(
         }
         let roll = falls.rng.get_or_insert_with(|| ChaCha8Rng::seed_from_u64(0xFA11_1E65)).next_u64();
         let leg = fall_leg(roll);
-        let info = fnv_game::combat::HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: Some(leg_hit(leg, dmg)) };
+        let info = fnv_game::combat::HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: Some(leg_hit(leg, dmg)), penetrated: None };
         let r = apply_hit(script.as_deref_mut(), &mut sim, f.actor, dmg, info, &mut stats, &mut feedback, hud.as_deref_mut(), &mut messages, &[], false, None);
         match &r {
             Some(r) => info!(

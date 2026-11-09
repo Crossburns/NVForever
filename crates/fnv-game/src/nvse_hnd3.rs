@@ -332,7 +332,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "md5file" => XVal::Str(String::new()),
         "setprojectilerefweapon" => args.first().cloned().unwrap_or(zero),
         "setactorvelocity" | "setvelex" | "baseadditemhealth" | "addneweffect" | "removenththeffect" | "removentheffect" | "getequippedex" => zero,
-        "getarmourpenetrated" => zero,
+        // 1 when the last hit on the actor got through its Damage Threshold: Simple Attack
+        // Reactions plays its hit reactions in combat only then (218 dialogue result
+        // scripts, `if GetArmourPenetrated == 1 || IsInCombat == 0`). A hit with no armour
+        // step (a script's damage) counts as through [hypothesis]; no hit yet is 0.
+        "getarmourpenetrated" => XVal::Num(match subject.and_then(|r| g.extra.get(&r)).and_then(|e| e.last_hit) {
+            Some(h) => f64::from(u8::from(h.penetrated.unwrap_or(true))),
+            None => 0.0,
+        }),
         _ => return None,
     };
     Some(Ok(v))

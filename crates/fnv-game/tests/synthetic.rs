@@ -1833,7 +1833,7 @@ fn combat_hits_damage_health_kill_and_reward() {
     // An auto-calculated one: Base Health 10 + (Endurance 5 − 1) × 5 + (level 5 − 1) × 5,
     // the original's NCR troopers' 50 (npc-behaviour-compare.md §9).
     assert_eq!(g.max_health(FormId(NPC_AUTO_REF)), 50.0);
-    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 1, critical: true, limb: None };
+    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 1, critical: true, limb: None, penetrated: None };
     let r = g.hit(npc, 30.0, by_player);
     assert_eq!((r.dealt, r.health, r.died), (30.0, 25.0, false));
     assert_eq!(g.extra[&npc].last_hit.map(|h| (h.location, h.critical)), Some((1, true)));
@@ -1867,7 +1867,7 @@ fn a_hired_companions_kill_earns_the_player_xp() {
     use fnv_game::combat::HitInfo;
     let f = fixture();
     let (npc, mate) = (FormId(NPC_REF), FormId(NPC_AUTO_REF));
-    let by_mate = HitInfo { attacker: Some(mate), weapon: None, location: 1, critical: false, limb: None };
+    let by_mate = HitInfo { attacker: Some(mate), weapon: None, location: 1, critical: false, limb: None, penetrated: None };
     // Not hired: no XP.
     let mut g = game(&f);
     g.new_game();
@@ -1905,7 +1905,7 @@ fn only_the_hit_that_killed_is_the_killing_blow() {
         let ctx = Ctx { unit: "test".into(), opcode: op, on: Some(npc), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
         g.call_function(&ctx, args).num()
     };
-    let wound = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: true, limb: None };
+    let wound = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: true, limb: None, penetrated: None };
 
     // A wound, then a KillActor with no cause: no hit killed.
     let mut g = game(&f);
@@ -1975,7 +1975,7 @@ fn a_players_death_earns_no_kill_credit() {
     let mut f = fixture();
     let def = ChallengeDef { form: chal, kind: kind::KILL_CATEGORY, threshold: 100, flags: 0, interval: 0, value1: 0, value2: 0, value3: 0, form1: None, form2: None, name: None, description: None };
     f.data.challenge_defs.insert(chal, def);
-    let by_player = HitInfo { attacker: Some(p), weapon: None, location: 0, critical: false, limb: None };
+    let by_player = HitInfo { attacker: Some(p), weapon: None, location: 0, critical: false, limb: None, penetrated: None };
     let credit = |g: &Game| (g.player.xp, g.misc_stat(PEOPLE_KILLED), g.misc_stat(TOTAL_THINGS_KILLED), g.player.challenges.get(&chal).map_or(0, |c| c.progress));
     let start = || {
         let mut g = game(&f);
@@ -2033,7 +2033,7 @@ fn dismembered_parts_are_kept_and_read_by_scripts() {
     };
     let nums = |v: &[f64]| v.iter().map(|&v| ArgValue::Value(Value::Num(v))).collect::<Vec<_>>();
     assert_eq!(call(&mut g, KILLING_BLOW_LIMB, &[]), -1.0);
-    let head = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 1, critical: false, limb: None };
+    let head = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 1, critical: false, limb: None, penetrated: None };
     assert!(g.hit(npc, 500.0, head).died);
     assert_eq!(call(&mut g, KILLING_BLOW_LIMB, &[]), 1.0);
     // A hit on the corpse is not the killing blow.
@@ -2066,7 +2066,7 @@ fn a_hit_on_an_object_runs_its_hit_blocks() {
     g.new_game();
     let target = FormId(ACT_REF);
     let hits = |g: &Game| g.var(InstKey::Ref { reference: target }, 2).num();
-    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: -1, critical: false, limb: None };
+    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: -1, critical: false, limb: None, penetrated: None };
     // Without a weapon: `OnHit player` only.
     assert!(g.hit_object(target, by_player));
     assert_eq!(hits(&g), 10.0);
@@ -2212,7 +2212,7 @@ fn limb_hits_lower_conditions_and_cripple() {
     let npc = FormId(NPC_REF);
     // Maximum health 55; a leg at 25 %: a pool of 13.75. Left Mobility Condition is code 29.
     let leg = LimbHit { condition: 29, health_percent: 25.0, damage: 0.0, points: false };
-    let hit = |damage: f64| HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 7, critical: false, limb: Some(LimbHit { damage, ..leg }) };
+    let hit = |damage: f64| HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 7, critical: false, limb: Some(LimbHit { damage, ..leg }), penetrated: None };
     let r = g.hit(npc, 5.0, hit(2.75));
     assert_eq!((r.limb, r.crippled), (Some((29, 80.0)), false));
     assert!(!g.is_crippled(npc, 29));
@@ -2280,7 +2280,7 @@ fn limb_damage_in_points() {
     let f = fixture();
     let mut g = game(&f);
     g.new_game();
-    let leg = |damage: f64| HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: Some(LimbHit { condition: RIGHT_MOBILITY, health_percent: 0.0, damage, points: true }) };
+    let leg = |damage: f64| HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: Some(LimbHit { condition: RIGHT_MOBILITY, health_percent: 0.0, damage, points: true }), penetrated: None };
     for target in [FormId(NPC_REF), FormId::PLAYER_REF] {
         let r = g.hit(target, 49.88, leg(24.94));
         assert_eq!(r.limb.map(|(c, v)| (c, (v * 100.0).round() / 100.0)), Some((RIGHT_MOBILITY, 75.06)));
@@ -2303,7 +2303,7 @@ fn crippled_limbs_slow_and_heal() {
     // fCombatPlayerLimbDamageMult's default: half for the player, all for others.
     assert_eq!(g.limb_damage(FormId::PLAYER_REF, 10.0), 5.0);
     assert_eq!(g.limb_damage(npc, 10.0), 10.0);
-    let hit = |condition: u16| HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 7, critical: false, limb: Some(LimbHit { condition, health_percent: 25.0, damage: 1000.0, points: false }) };
+    let hit = |condition: u16| HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 7, critical: false, limb: Some(LimbHit { condition, health_percent: 25.0, damage: 1000.0, points: false }), penetrated: None };
     assert_eq!(g.leg_speed_mult(npc), 1.0);
     assert!(g.hit(npc, 1.0, hit(LEFT_MOBILITY)).crippled);
     assert_eq!(g.leg_speed_mult(npc), 0.85);

@@ -1802,7 +1802,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                 Some(w) => Some(resolve(g, w)?),
                 None => None,
             };
-            let info = crate::combat::HitInfo { attacker: Some(attacker), weapon, location: -1, critical: false, limb: None };
+            let info = crate::combat::HitInfo { attacker: Some(attacker), weapon, location: -1, critical: false, limb: None, penetrated: None };
             let actor = matches!(crate::functions::base_of(g, t).and_then(|b| g.data.sig(b)).as_ref(), Some(b"NPC_") | Some(b"CREA"));
             if actor {
                 let r = g.hit(t, damage.unwrap_or(0.0), info);

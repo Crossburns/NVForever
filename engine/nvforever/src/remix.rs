@@ -62,6 +62,9 @@ struct CpuMeshes {
     changed: Vec<AssetId<Mesh>>,
     /// NIF materials changed (glows by the hour, fades, swapped textures).
     changed_materials: Vec<UntypedAssetId>,
+    /// World textures whose pixels went to Remix and whose Bevy image was cut down to one
+    /// 4x4 level (`take_new_images`).
+    shrunk: HashSet<AssetId<Image>>,
 }
 
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
@@ -203,8 +206,22 @@ struct RemixState {
     mat_gen: HashMap<UntypedAssetId, u32>,
     /// Changed meshes made again since the last stats line.
     remade: u64,
+    /// Changed meshes refreshed in place since the last stats line.
+    refreshed: u64,
+    /// Each made mesh's vertex count, index count and Remix hash.
+    mesh_shape: HashMap<(AssetId<Mesh>, UntypedAssetId), (usize, usize, u64)>,
     /// Interior fill light's strength (NVF_REMIX_FILL_SCALE).
     fill_scale: f32,
+    /// How far from the eye shapes the camera does not see stay in the traced scene
+    /// (NVF_REMIX_MEMBER_RADIUS, game units).
+    member_radius: f32,
+    /// Textures waiting for their upload, oldest first, and their hashes: a frame uploads
+    /// at most `UPLOAD_BYTES_A_FRAME` of them (the runtime keeps each upload's pixels
+    /// until the GPU has them; every texture of a cell in one frame cost gigabytes of
+    /// memory at once) [observed 2026-11-09: 6 to 15 GB private memory within 5 s of the
+    /// first frame, and a failed allocation when the machine had 10 GB to give].
+    upload_queue: std::collections::VecDeque<(AssetId<Image>, Arc<PendingImage>)>,
+    queued: HashSet<u64>,
     /// The UI overlay's last picture and its size.
     ui_last: Option<(Vec<u8>, (u32, u32))>,
     /// Shapes left out (test aid: NVF_REMIX_TRACE_HIDE).
@@ -330,9 +347,18 @@ fn remix_format(f: TextureFormat) -> Option<(u32, u32)> {
     })
 }
 
-fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<Image>>, names: Option<Res<nvf_assets::texture::TextureCache>>, mut cpu: ResMut<CpuMeshes>, ui: Option<Res<UiOverlay>>) {
+fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, mut images: ResMut<Assets<Image>>, names: Option<Res<nvf_assets::texture::TextureCache>>, mut cpu: ResMut<CpuMeshes>, ui: Option<Res<UiOverlay>>) {
+    static KEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let keep_bevy = *KEEP.get_or_init(|| std::env::var_os("NVF_REMIX_KEEP_BEVY_TEXTURES").is_some());
     for e in ev.read() {
+        if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = e {
+            cpu.shrunk.remove(id);
+        }
         let (AssetEvent::Added { id } | AssetEvent::Modified { id }) = e else { continue };
+        // The change is this system's own (the image cut down below).
+        if cpu.shrunk.contains(id) {
+            continue;
+        }
         if ui.as_ref().is_some_and(|u| u.image == *id) {
             continue;
         }
@@ -353,7 +379,38 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<
             cpu.skipped_images.push(*id);
             continue;
         }
-        let Some(data) = img.data.clone() else {
+        let name = names.as_ref().and_then(|n| n.name_of(*id)).map(str::to_ascii_lowercase);
+        // A world texture (one the texture cache loaded, not the interface's) is drawn by
+        // Remix alone: its pixels go to Remix and Bevy keeps one 4x4 level, so the picture
+        // is not held twice, in Bevy's GPU textures under the Remix window and in Remix's
+        // [observed 2026-11-09: the driver's 14.4 GB of 16 in use against Remix's own
+        // 6.5 GB, and 19 GB of private memory; NVF_REMIX_KEEP_BEVY_TEXTURES keeps Bevy's
+        // for comparing with a Bevy screenshot].
+        let shrink = !keep_bevy && name.as_deref().is_some_and(|n| !n.contains("interface\\") && !n.contains("interface/")) && img.data.is_some() && d.size.width >= 4 && d.size.height >= 4;
+        let (format, width, height, mips) = (d.format, d.size.width, d.size.height, d.mip_level_count);
+        let taken = if shrink {
+            let small = match format {
+                TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb | TextureFormat::Bc4RUnorm => 8,
+                TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb | TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb => 64,
+                _ => 16,
+            };
+            images.get_mut(*id).and_then(|mut img| {
+                let full = img.data.take()?;
+                img.data = Some(full[..small.min(full.len())].to_vec());
+                img.texture_descriptor.size.width = 4;
+                img.texture_descriptor.size.height = 4;
+                img.texture_descriptor.mip_level_count = 1;
+                Some(full)
+            })
+        } else {
+            None
+        };
+        if taken.is_some() {
+            cpu.shrunk.insert(*id);
+        }
+        let Some(img) = images.get(*id) else { continue };
+        let d = &img.texture_descriptor;
+        let Some(data) = taken.or_else(|| img.data.clone()) else {
             // A render target in a format Remix takes: read back each frame (live_textures).
             let rt = d.usage.contains(bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT);
             if rt && matches!(d.format, TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb | TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb) {
@@ -368,13 +425,9 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, images: Res<Assets<
         // texture the cache does not name is taken as one too [observed 2026-11-09: by
         // path none was found, every normal map went as a picture and rocks and ground
         // shaded flat].
-        let normal = !d.format.is_srgb()
-            && names.as_ref().and_then(|n| n.name_of(*id)).is_none_or(|n| {
-                let n = n.to_ascii_lowercase();
-                n.ends_with("_n.dds") || n.ends_with("_n.png")
-            });
-        let d3d9 = d3d9_hash(d.format, d.size.width, d.size.height, &data);
-        cpu.pending_images.push((*id, Arc::new(PendingImage { width: d.size.width, height: d.size.height, mips: d.mip_level_count, format: d.format, data, normal, d3d9 })));
+        let normal = !format.is_srgb() && name.as_deref().is_none_or(|n| n.ends_with("_n.dds") || n.ends_with("_n.png"));
+        let d3d9 = d3d9_hash(format, width, height, &data);
+        cpu.pending_images.push((*id, Arc::new(PendingImage { width, height, mips, format, data, normal, d3d9 })));
     }
 }
 
@@ -385,6 +438,7 @@ type ShapeParts<M> = (
     &'static MeshMaterial3d<M>,
     &'static GlobalTransform,
     &'static ViewVisibility,
+    &'static InheritedVisibility,
     Option<&'static bevy::mesh::skinning::SkinnedMesh>,
     Option<&'static RenderLayers>,
     Has<crate::terrain::LandMesh>,
@@ -430,6 +484,8 @@ struct ShapeIn<'a> {
     base: &'a StandardMaterial,
     gt: &'a GlobalTransform,
     vis: bool,
+    /// Shown by the game (not hidden, in a drawn cell), in the camera's view or not.
+    shown: bool,
     skinned: Option<&'a bevy::mesh::skinning::SkinnedMesh>,
     layers: Option<&'a RenderLayers>,
     /// A mesh of a cell's land (its base or a blended texture layer), and its cell.
@@ -447,9 +503,9 @@ impl<'w, 's> Shapes<'w, 's> {
             out: &mut Vec<ShapeIn<'a>>,
             decal: fn(&E) -> bool,
         ) {
-            for (entity, mesh, mat, gt, vis, skinned, layers, land, parent) in q {
+            for (entity, mesh, mat, gt, vis, shown, skinned, layers, land, parent) in q {
                 let Some(material) = m.get(mat.id()) else { continue };
-                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: decal(&material.extension) });
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: decal(&material.extension) });
             }
         }
         let mut out = Vec::new();
@@ -509,16 +565,32 @@ fn frame(
     // with lights) [observed 2026-11-09: particles kept their first shape].
     let changed: HashSet<AssetId<Mesh>> = std::mem::take(&mut cpu.changed).into_iter().collect();
     if !changed.is_empty() {
-        for id in &changed {
-            *st.mesh_gen.entry(*id).or_default() += 1;
-        }
-        st.remade += changed.len() as u64;
+        // The same triangles with new vertices (a particle system's quads, a morph) are
+        // refreshed in place; anything else is made again [documented: New Vegas RTX's
+        // api_mesh.hpp refresh_mesh]. Made again every frame, each change left its old
+        // acceleration structure for the runtime to free later [observed 2026-11-09: 18
+        // meshes a frame in Goodsprings, the driver's memory 2 GB up in 300 frames].
         let stale: Vec<_> = st.meshes.keys().filter(|k| changed.contains(&k.0)).copied().collect();
+        let mut remake: HashSet<AssetId<Mesh>> = HashSet::new();
         for k in stale {
-            if let Some(h) = st.meshes.remove(&k) {
-                st.remix.destroy_mesh(h);
+            let refreshed = match (cpu.by_id.get(&k.0), st.meshes.get(&k), st.materials.get(&k.1), st.mesh_shape.get(&k)) {
+                (Some(d), Some(h), Some(m), Some(&(nv, ni, hash))) if d.skin.is_none() && d.verts.len() == nv && d.idx.len() == ni && !remake.contains(&k.0) => st.remix.refresh_mesh(hash, *h, &d.verts, &d.idx, *m),
+                _ => false,
+            };
+            if refreshed {
+                st.refreshed += 1;
+            } else {
+                remake.insert(k.0);
+                st.mesh_shape.remove(&k);
+                if let Some(h) = st.meshes.remove(&k) {
+                    st.remix.destroy_mesh(h);
+                }
             }
         }
+        for id in &remake {
+            *st.mesh_gen.entry(*id).or_default() += 1;
+        }
+        st.remade += remake.len() as u64;
     }
     // Changed materials: dropped with the meshes made with them, made again under a new
     // generation's hash (as changed meshes).
@@ -533,6 +605,7 @@ fn frame(
         }
         let stale: Vec<_> = st.meshes.keys().filter(|k| changed_mats.contains(&k.1)).copied().collect();
         for k in stale {
+            st.mesh_shape.remove(&k);
             if let Some(h) = st.meshes.remove(&k) {
                 st.remix.destroy_mesh(h);
             }
@@ -542,12 +615,20 @@ fn frame(
     for id in std::mem::take(&mut cpu.skipped_images) {
         st.failed_textures.insert(hash_of(&id));
     }
-    // New textures.
+    // New textures, within the frame's upload budget (the first always goes).
     for (id, img) in std::mem::take(&mut cpu.pending_images) {
+        st.queued.insert(hash_of(&id));
+        st.upload_queue.push_back((id, img));
+    }
+    let mut uploaded = 0usize;
+    while uploaded < UPLOAD_BYTES_A_FRAME {
+        let Some((id, img)) = st.upload_queue.pop_front() else { break };
         let hash = hash_of(&id);
+        st.queued.remove(&hash);
         if st.textures.contains(&hash) {
             continue;
         }
+        uploaded += img.data.len();
         let Some((format, vk)) = remix_format(img.format) else {
             st.failed_textures.insert(hash);
             continue;
@@ -645,9 +726,17 @@ fn frame(
         }
     }
     let mut own = 0u32;
+    let mut unseen_built = 0usize;
     let all = shapes.all();
     terrain_materials(st, &cpu, &all);
-    for ShapeIn { entity, mesh, mat, base, gt, vis, skinned, layers, land, decal, .. } in all {
+    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, .. } in all {
+        // In the traced scene: what the camera sees, and everything the game shows within
+        // `member_radius` of the eye, seen or not: a path tracer needs what is behind and
+        // beside the camera for its shadows, reflections and bounced light (New Vegas RTX
+        // keeps every loaded static in the scene, drawn or not) [documented: its
+        // docs/fnv-api-only.md, "Statics: scene membership, not draws"].
+        let seen = vis;
+        let vis = vis || (shown && eye.is_some_and(|e| gt.translation().distance_squared(e) < st.member_radius * st.member_radius));
         // Land: a blended layer already in its base's terrain material is not drawn alone.
         // (Test aid: NVF_REMIX_HIDE_LAND leaves the land out.)
         if land && (st.layered.contains(&mesh) || std::env::var_os("NVF_REMIX_HIDE_LAND").is_some()) {
@@ -713,6 +802,13 @@ fn frame(
                     }
                     continue;
                 };
+                // What the camera does not see is built a little each frame.
+                if !seen {
+                    if unseen_built >= UNSEEN_VERTS_A_FRAME {
+                        continue;
+                    }
+                    unseen_built += data.verts.len();
+                }
                 let Some(rm) = material(st, mat, base) else {
                     why[3] += 1;
                     continue;
@@ -731,9 +827,14 @@ fn frame(
                     moved = data.verts.iter().map(|v| HardcodedVertex { texcoord: t.transform_point2(Vec2::from(v.texcoord)).to_array(), ..*v }).collect();
                     &moved
                 };
-                match st.remix.create_mesh_skinned(hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0), st.mat_gen.get(&mat).copied().unwrap_or(0))), verts, &data.idx, rm, skin) {
+                let mesh_hash = hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0), st.mat_gen.get(&mat).copied().unwrap_or(0)));
+                match st.remix.create_mesh_skinned(mesh_hash, verts, &data.idx, rm, skin) {
                     Ok(h) => {
                         st.meshes.insert(key, h);
+                        // Refreshed in place later only as sent: not with a baked UV transform.
+                        if t == bevy::math::Affine2::IDENTITY {
+                            st.mesh_shape.insert(key, (data.verts.len(), data.idx.len(), mesh_hash));
+                        }
                         h
                     }
                     Err(_) => {
@@ -771,7 +872,7 @@ fn frame(
         // edges stood through the loaded land as streaked sheets, observed 2026-11-09].
         let m = if base.depth_bias <= -50.0 { Mat4::from_translation(Vec3::new(0.0, -LOD_SINK, 0.0)) * gt.to_matrix() } else { gt.to_matrix() };
         let tr = nvf_remix::transform_from_cols(m.to_cols_array_2d());
-        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, instance_alpha(base.alpha_mode)).is_err() {
+        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, if st.terrain.contains_key(&mesh) { None } else { instance_state(base) }).is_err() {
             st.errors += 1;
         }
     }
@@ -791,18 +892,14 @@ fn frame(
                 let rm = match st.materials.get(&key.1) {
                     Some(h) => *h,
                     None => {
-                        // The shallow colour's hue as what the water lets through over
-                        // 3000 units (about 40 m) [hypothesis: tuned by eye against
-                        // NVForever's own water; brightest channel 1, so only the hue
-                        // tints].
-                        let c = w.params.shallow;
-                        let m = c.x.max(c.y).max(c.z).max(1e-3);
-                        info!("remix: water {:?} shallow {:?}", key.1, c);
+                        let display = |c: Vec4| [c.x, c.y, c.z].map(|v| crate::lights::linear_to_display(v.max(0.0)));
+                        let (colour, distance) = water_medium(display(w.params.shallow), display(w.params.deep));
+                        info!("remix: water {:?} transmittance {colour:?} over {distance:.0} units", key.1);
                         // The water's noise (its normal map) gives the surface its waves; Remix
                         // moves it on animated water [documented: rtx_options.h
                         // animatedWaterTextures, instance category ANIMATED_WATER].
                         let waves = w.noise.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
-                        match st.remix.create_translucent_material(hash_of(&key.1), [c.x / m, c.y / m, c.z / m], 3000.0, 1.33, waves) {
+                        match st.remix.create_translucent_material(hash_of(&key.1), colour, distance, 1.33, waves) {
                             Ok(h) => {
                                 st.materials.insert(key.1, h);
                                 h
@@ -949,8 +1046,9 @@ fn frame(
     if st.frames % 600 == 1 {
         info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3]);
         let n = 600.0;
-        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade);
+        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed);
         st.remade = 0;
+        st.refreshed = 0;
         st.build_time = Default::default();
         st.present_time = Default::default();
     }
@@ -986,6 +1084,9 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
                 return None;
             }
         }
+    } else if [&b.base_color_texture, &b.normal_map_texture, &b.emissive_texture].into_iter().flatten().any(|h| st.queued.contains(&hash_of(&h.id()))) {
+        // Still in the upload queue: it will come.
+        return None;
     }
     let tex = |h: &Option<Handle<Image>>| h.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
     let c = b.base_color.to_linear();
@@ -1015,8 +1116,14 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         emissive: if b.unlit { tex(&b.base_color_texture) } else { tex(&b.emissive_texture) },
         // A glow map at New Vegas RTX's glow intensity (rtx.fnvProtocol.glowEmissiveIntensity)
         // [documented: the wrapper's api_material.cpp, glow_intensity].
-        emissive_intensity: if b.unlit { 1.0 } else if e.red + e.green + e.blue > 0.0 { if b.emissive_texture.is_some() { glow } else { 1.0 } } else { 0.0 },
-        emissive_color: if b.unlit { [c.red, c.green, c.blue] } else { [e.red, e.green, e.blue] },
+        // A lit shape glows only through a glow map, tinted by the material's emissive
+        // colour (display values, at most 1 a channel; black is none); without the map it
+        // does not glow at all, whatever its emissive colour [documented: the wrapper's
+        // scene_statics.cpp, md.glow from texture slot 2 with glow_scale / glow_tint].
+        // Sent as a uniform colour, every shape with an emissive colour shone over its
+        // whole surface.
+        emissive_intensity: if b.unlit { 1.0 } else if b.emissive_texture.is_some() && e.red + e.green + e.blue > 0.0 { glow } else { 0.0 },
+        emissive_color: if b.unlit { [c.red, c.green, c.blue] } else { glow_tint([e.red, e.green, e.blue]) },
         albedo_constant: [c.red, c.green, c.blue],
         opacity: c.alpha,
         roughness: b.perceptual_roughness,
@@ -1028,6 +1135,7 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         draw_call_alpha: !listed.1 && instance_alpha(b.alpha_mode).is_some(),
         alpha_test,
         blend,
+        tint: None,
     };
     // A normal map goes as a one-layer material (layer 0 at full weight everywhere): the
     // layer reads it as RGB tangent space with its alpha as gloss, where a plain normal
@@ -1050,6 +1158,32 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
             None
         }
     }
+}
+
+/// A glow map's tint from the material's linear emissive colour: display values held to 1
+/// a channel (a brighter colour keeps its hue).
+fn glow_tint(e: [f32; 3]) -> [f32; 3] {
+    let d = e.map(|v| crate::lights::linear_to_display(v.max(0.0)));
+    let m = d[0].max(d[1]).max(d[2]).max(1.0);
+    d.map(|v| v / m)
+}
+
+/// The water's medium as New Vegas RTX makes it from the water shader's shallow and deep
+/// colours (display values): mostly the deep colour's hue, normalised to its brightest
+/// channel and scaled by the clarity, over a distance that grows with the colours'
+/// brightness [documented: the wrapper's api_water.cpp medium_of; remix-comp.ini
+/// WaterMeasurementDistance 256, WaterClarity 0.8].
+fn water_medium(shallow: [f32; 3], deep: [f32; 3]) -> ([f32; 3], f32) {
+    let mut base = [0, 1, 2].map(|k| 0.35 * shallow[k] + 0.65 * deep[k]);
+    let mean = [0, 1, 2].map(|k| 0.5 * (shallow[k] + deep[k]));
+    let mut m = base[0].max(base[1]).max(base[2]);
+    let mut brightness = mean[0].max(mean[1]).max(mean[2]);
+    if m < 1e-3 {
+        base = [0.25, 0.40, 0.38];
+        m = 0.40;
+        brightness = 0.35;
+    }
+    (base.map(|b| (b / m * 0.8).clamp(0.02, 0.98)), 256.0 * (brightness / 0.35).clamp(0.25, 2.0))
 }
 
 /// The weight textures of a one-layer material: layer 0 at 1, the second set at 0.
@@ -1076,8 +1210,14 @@ fn one_layer(st: &mut RemixState) -> Option<(u64, u64)> {
 fn sky_drive(st: &mut RemixState, sky: &crate::sky::SkyState, eye: Option<Vec3>) {
     let [x, y, z] = fnv_world::sky::sun_direction(&sky.climate, sky.hour, crate::sky::SUN_SOUTH);
     let elevation = z.clamp(-1.0, 1.0).asin().to_degrees();
-    let rotation = x.atan2(y).to_degrees().rem_euclid(360.0);
-    let moon_rotation = (-x).atan2(-y).to_degrees().rem_euclid(360.0);
+    // The sky builds its sun from these in the scene's space, Y up: (cos e sin r, sin e,
+    // cos e cos r) [documented: the runtime's numos renderer.cpp, sunDirection]. Bevy's
+    // +Z is the game's south (world.rs game_to_bevy: game (x, y, z) is Bevy (x, z, -y)),
+    // so r is measured from south: with the original's atan2(x, y) the sun stood mirrored
+    // north to south and every shadow fell the wrong way [observed 2026-11-09 against the
+    // original's capture at Goodsprings, 14:00].
+    let rotation = x.atan2(-y).to_degrees().rem_euclid(360.0);
+    let moon_rotation = (-x).atan2(y).to_degrees().rem_euclid(360.0);
     // The game's phase index runs 0 full .. 4 new; the sky's phase 0 new, 0.5 full.
     let phase = ((sky.moon_phase() + 4) & 7) as f32 / 8.0;
     let mut values: Vec<(&'static str, String)> = vec![
@@ -1361,13 +1501,23 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         mesh_gen: HashMap::new(),
         mat_gen: HashMap::new(),
         remade: 0,
+        refreshed: 0,
+        mesh_shape: HashMap::new(),
         fill_scale: scale("NVF_REMIX_FILL_SCALE", 20000.0),
+        member_radius: scale("NVF_REMIX_MEMBER_RADIUS", 8192.0),
+        upload_queue: Default::default(),
+        queued: HashSet::new(),
         ui_last: None,
         hidden: HashSet::new(),
         build_time: Default::default(),
         present_time: Default::default(),
     })
 }
+
+/// The most texture bytes a frame hands the runtime (about 3 GB a second at 60 frames).
+const UPLOAD_BYTES_A_FRAME: usize = 48 << 20;
+/// The most vertices of shapes the camera does not see a frame makes Remix meshes of.
+const UNSEEN_VERTS_A_FRAME: usize = 150_000;
 
 /// How far LOD terrain is sunk under the loaded land (game units, Bevy's up is +y).
 const LOD_SINK: f32 = 200.0;
@@ -1376,9 +1526,21 @@ const LOD_SINK: f32 = 200.0;
 /// and alpha-blended ones only (glows and multiplied shapes keep their blend type).
 fn instance_alpha(mode: AlphaMode) -> Option<nvf_remix::InstanceAlpha> {
     match mode {
-        AlphaMode::Mask(t) => Some(nvf_remix::InstanceAlpha { test: Some((t * 255.0) as u8), blend: false }),
-        AlphaMode::Blend | AlphaMode::Premultiplied => Some(nvf_remix::InstanceAlpha { test: None, blend: true }),
+        AlphaMode::Mask(t) => Some(nvf_remix::InstanceAlpha { test: Some((t * 255.0) as u8), blend: false, baked: true }),
+        AlphaMode::Blend | AlphaMode::Premultiplied => Some(nvf_remix::InstanceAlpha { test: None, blend: true, baked: true }),
         _ => None,
+    }
+}
+
+/// The texture stage state every instance carries: colour the texture's times the vertex
+/// colour's (as baked lighting on lit shapes: the runtime keeps its hue), with the alpha
+/// state of `instance_alpha` where the material has one [documented: New Vegas RTX's
+/// api_material.cpp vertex_color_blend, on every static]. Glows and multiplied shapes keep
+/// their material's blend type and get none.
+fn instance_state(b: &StandardMaterial) -> Option<nvf_remix::InstanceAlpha> {
+    match b.alpha_mode {
+        AlphaMode::Add | AlphaMode::Multiply => None,
+        m => Some(nvf_remix::InstanceAlpha { baked: !b.unlit, ..instance_alpha(m).unwrap_or(nvf_remix::InstanceAlpha { test: None, blend: false, baked: true }) }),
     }
 }
 
@@ -1580,6 +1742,28 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
                     w[k / 4][v * 4 + k % 4] = (wk.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
                 }
             }
+            // The land's vertex colours as the material's tint texture, on the weights'
+            // grid (display values; terrain.rs stores them linear) [documented: the
+            // wrapper's api_terrain.cpp, "the land tint rides in the tint texture"].
+            let mut tint = vec![255u8; n * n * 4];
+            let mut tinted = false;
+            for v in 0..n * n {
+                let c = base.verts[v].color;
+                for (k, shift) in [16u32, 8, 0].into_iter().enumerate() {
+                    let lin = ((c >> shift) & 0xFF) as f32 / 255.0;
+                    let d = (crate::lights::linear_to_display(lin).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                    tint[v * 4 + k] = d;
+                    tinted |= d < 254;
+                }
+            }
+            let tint_hash = hash_of(&(b.mesh, 2u8));
+            if tinted {
+                let t = nvf_remix::TextureData { hash: tint_hash, width: n as u32, height: n as u32, mips: 1, format: ffi::FORMAT_R8G8B8A8_UNORM, data: &tint, vk_format: 0, encoding: 0, replace: false };
+                if st.remix.create_texture(&t).is_err() {
+                    st.errors += 1;
+                    tinted = false;
+                }
+            }
             let hashes = [hash_of(&(b.mesh, 0u8)), hash_of(&(b.mesh, 1u8))];
             for (h, data) in hashes.iter().zip(w.iter()) {
                 let t = nvf_remix::TextureData { hash: *h, width: n as u32, height: n as u32, mips: 1, format: ffi::FORMAT_R8G8B8A8_UNORM, data, vk_format: 0, encoding: 0, replace: false };
@@ -1612,15 +1796,18 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
                 albedo: Some(base_albedo),
                 albedo_constant: [c.red, c.green, c.blue],
                 opacity: 1.0,
-                roughness: b.base.perceptual_roughness,
-                metallic: b.base.metallic,
+                // Land has no specular [documented: remix-comp.ini TerrainRoughness 0.85].
+                roughness: 0.85,
+                metallic: 0.0,
+                tint: tinted.then_some(tint_hash),
                 ..Default::default()
             };
+            let white: Vec<HardcodedVertex> = base.verts.iter().map(|v| HardcodedVertex { color: 0xFFFF_FFFF, ..*v }).collect();
             let Ok(mat) = st.remix.create_terrain_material(&desc, &list, hashes, [su, sv], [ou, ov]) else {
                 st.errors += 1;
                 continue;
             };
-            match st.remix.create_mesh(hash_of(&(b.mesh, "terrain-mesh")), &base.verts, &base.idx, mat) {
+            match st.remix.create_mesh(hash_of(&(b.mesh, "terrain-mesh")), &white, &base.idx, mat) {
                 Ok(h) => {
                     st.terrain.insert(b.mesh, h);
                     for (l, _) in top {

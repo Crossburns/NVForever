@@ -142,7 +142,7 @@ fn test_hits(
             None => None,
         };
         let crit = combat.as_deref().filter(|_| h.critical).and_then(|c| crate::combat::crit_effect(c, weapon));
-        let info = HitInfo { attacker: Some(by), weapon, location: 0, critical: h.critical, limb };
+        let info = HitInfo { attacker: Some(by), weapon, location: 0, critical: h.critical, limb, penetrated: None };
         let r = apply_hit(script.as_deref_mut(), &mut sim, target, h.damage, info, &mut stats, &mut feedback, hud.as_deref_mut(), &mut messages, &[], false, crit);
         // A hit on a limb that kills, or lands on the corpse, may dismember it as a shot
         // there would (docs/spec-notes/dismemberment.md §4).

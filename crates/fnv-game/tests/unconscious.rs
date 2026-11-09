@@ -124,7 +124,7 @@ fn rising(g: &Game, r: FormId) -> bool {
 }
 
 fn by_player() -> HitInfo {
-    HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 0, critical: false, limb: None }
+    HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 0, critical: false, limb: None, penetrated: None }
 }
 
 #[test]

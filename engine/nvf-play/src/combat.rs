@@ -343,7 +343,7 @@ fn armour_lines(script: Option<&mut ScriptState>, attacker: Option<FormId>, targ
 const BLOW_PROBE: f32 = 24.0;
 
 fn blast_hit_info(cause: Option<Cause>) -> HitInfo {
-    HitInfo { attacker: cause.map(|c| c.actor), weapon: cause.map(|c| c.weapon), location: -1, critical: false, limb: None }
+    HitInfo { attacker: cause.map(|c| c.actor), weapon: cause.map(|c| c.weapon), location: -1, critical: false, limb: None, penetrated: None }
 }
 
 /// One projectile to draw this frame.
@@ -3809,7 +3809,7 @@ fn melee(
             let push = damage::knockback_force(&c.rules, d.dealt, agility);
             let location = bp.as_ref().map_or(0, BodyPart::location);
             let limb = limb_hit(bp.as_ref(), &d, &w);
-            let info = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: Some(id), location, critical: d.critical, limb };
+            let info = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: Some(id), location, critical: d.critical, limb, penetrated: Some(d.raw - d.dt > d.raw * c.tuning.dt_floor) };
             pushes.write(ActorPush { form_id: target.0, point: hit.point, dv: vec::scale(player.look_dir(), MELEE_PUSH * if power.is_some() { POWER_PUSH } else { 1.0 }) });
             let mut items = hit_items(c, script.as_deref_mut(), &mut sim, &mut stats, FormId::PLAYER_REF, Some(id), None);
             // A special move's effect goes on with the blow (Ranger Takedown's knockdown
@@ -4130,7 +4130,7 @@ fn actor_attacks(
         // keep Health on HitPart::default(), but give player blows a location and limb.
         // A creature uses this path's Fists Limb Dmg Mult in the absence of its own weapon.
         let bp = (b.target == FormId::PLAYER_REF).then(|| player_body_part(c, &phys, player.as_deref(), b.point)).flatten();
-        let info = HitInfo { attacker: Some(b.attacker), weapon: b.weapon, location: bp.as_ref().map_or(0, BodyPart::location), critical: d.critical, limb: limb_hit(bp.as_ref(), &d, &w) };
+        let info = HitInfo { attacker: Some(b.attacker), weapon: b.weapon, location: bp.as_ref().map_or(0, BodyPart::location), critical: d.critical, limb: limb_hit(bp.as_ref(), &d, &w), penetrated: Some(d.raw - d.dt > d.raw * c.tuning.dt_floor) };
         if b.target != FormId::PLAYER_REF {
             pushes.write(ActorPush { form_id: b.target.0, point: b.point, dv: vec::scale(b.dir, MELEE_PUSH) });
         }
@@ -4739,7 +4739,7 @@ fn fly(
                 let r = FormId(obj as u32);
                 // The object's OnHit and OnHitWith blocks, before any damage
                 // [documented: GECK wiki Event Handling] (combat-rules.md §14).
-                let info = HitInfo { attacker: Some(shooter), weapon: Some(id), location: -1, critical: false, limb: None };
+                let info = HitInfo { attacker: Some(shooter), weapon: Some(id), location: -1, critical: false, limb: None, penetrated: None };
                 let ran = script.as_deref_mut().and_then(|s| s.rt.as_mut()).is_some_and(|rt| with_world(rt, &mut sim, |rt| rt.game.hit_object(r, info)));
                 // The weapon's object effect reaches the object: its OnMagicEffectHit
                 // blocks (the Vault 22 traps catch the flamer's burn this way).
@@ -4786,7 +4786,7 @@ fn fly(
         // [design] Missing body part data keeps the whole-capsule fallback (location 0).
         let location = bp.as_ref().map_or(0, BodyPart::location);
         let limb = limb_hit(bp.as_ref(), &d, &w);
-        let info = HitInfo { attacker: Some(shooter), weapon: Some(id), location, critical: d.critical, limb };
+        let info = HitInfo { attacker: Some(shooter), weapon: Some(id), location, critical: d.critical, limb, penetrated: Some(d.raw - d.dt > d.raw * c.tuning.dt_floor) };
         if target != FormId::PLAYER_REF {
             pushes.write(ActorPush { form_id: target.0, point: p.point, dv: vec::scale(p.dir, SHOT_PUSH) });
         }

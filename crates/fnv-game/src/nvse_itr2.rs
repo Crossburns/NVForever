@@ -848,7 +848,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             if skip {
                 g.effect_health_damage(target, damage, attacker);
             } else {
-                g.hit(target, damage, HitInfo { attacker, weapon, location, critical: false, limb });
+                g.hit(target, damage, HitInfo { attacker, weapon, location, critical: false, limb, penetrated: None });
             }
             let fatigue = if ex { finite(num(args, 2, 0.0)) } else { 0.0 };
             if fatigue > 0.0 {

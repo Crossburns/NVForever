@@ -27,6 +27,9 @@ pub struct LastHit {
     /// 14 weapon [documented: catalogue notes of GetHitLocation].
     pub location: i32,
     pub critical: bool,
+    /// `combat::HitInfo::penetrated` (absent in older saves).
+    #[serde(default)]
+    pub penetrated: Option<bool>,
 }
 
 /// The furniture an actor is using (docs/spec-notes/furniture.md).

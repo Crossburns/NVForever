@@ -202,7 +202,7 @@ fn a_drains_death_has_no_killing_hit() {
     const GET_KILLING_BLOW_LIMB: u16 = 0x11F0;
     let f = fixture();
     let mut g = game(&f);
-    assert!(!g.hit(P, 10.0, HitInfo { attacker: None, weapon: None, location: 3, critical: false, limb: None }).died);
+    assert!(!g.hit(P, 10.0, HitInfo { attacker: None, weapon: None, location: 3, critical: false, limb: None, penetrated: None }).died);
     g.apply_hit_effect(P, FormId(DEADLY), None);
     g.frames(180);
     assert!(g.is_dead(P));

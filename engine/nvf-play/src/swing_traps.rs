@@ -43,7 +43,7 @@ fn strike(
     for h in hits.read() {
         let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
         let Some(s) = with_world(rt, &mut sim, |rt| rt.game.trap_contact(h.trap, h.actor, f64::from(h.speed))) else { continue };
-        let info = fnv_game::combat::HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: None };
+        let info = fnv_game::combat::HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: None, penetrated: None };
         let r = apply_hit(script.as_deref_mut(), &mut sim, h.actor, s.damage as f32, info, &mut stats, &mut feedback, hud.as_deref_mut(), &mut messages, &[], false, None);
         if s.push > 0.0 {
             if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {

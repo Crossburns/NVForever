@@ -98,10 +98,49 @@ weather.cpp; the plugin's lights.cpp; the runtime's rtx_light_utils.cpp]:
   with the outgoing weather and blend; the install's weather presets copied with their
   class bindings from remix-comp.ini [Weather].
 
+Second pass, 2026-11-09 (remix.rs, read against the wrapper and the runtime again):
+
+- Sun and moon bearing: the sky builds its sun as (cos e sin r, sin e, cos e cos r) in the
+  scene's space [documented: the runtime's numos renderer.cpp]; Bevy's +Z is the game's
+  south, so r is atan2(x, -y) of the game's sun direction. With the original's atan2(x, y)
+  the sun stood mirrored north to south and shadows fell the wrong way [observed against
+  the original's capture].
+- Scene membership: everything the game shows within 8192 units of the eye is in the
+  traced scene, in the camera's view or not (`NVF_REMIX_MEMBER_RADIUS`), built at most
+  150,000 vertices a frame [documented: the wrapper's docs/fnv-api-only.md, "scene
+  membership, not draws"]. Before, only what Bevy's view culling kept was sent.
+- Every instance carries the texture stage state (colour texture x vertex colour, as
+  baked lighting on lit shapes) [documented: the wrapper's vertex_color_blend]; the alpha
+  blend factors are the colour's, as D3D9's.
+- Glow only through a glow map, tinted by the emissive colour held to 1 a channel; a
+  shape with an emissive colour and no glow map does not glow [documented: the wrapper's
+  scene_statics.cpp].
+- Water's medium from the shallow and deep colours [documented: api_water.cpp medium_of;
+  WaterMeasurementDistance 256, WaterClarity 0.8], in place of the shallow hue over 3000
+  units.
+- Land: the vertex colours as the terrain material's tint texture, white vertices,
+  roughness 0.85 [documented: api_terrain.cpp; remix-comp.ini TerrainRoughness].
+
+Memory and frame cost, same pass [observed, Goodsprings, 1280x720, High preset]:
+
+- A world texture's pixels go to Remix and Bevy keeps one 4x4 level of it
+  (`NVF_REMIX_KEEP_BEVY_TEXTURES` keeps Bevy's): the driver's memory in use 14.4 GB
+  (98 % of the card, the runtime's budget at "high") -> 12.1 GB.
+- Textures are uploaded at most 48 MB a frame.
+- A changed mesh with the same vertex and index counts is refreshed in place
+  (MeshInfoRefreshGeometryEXT); others are made again (still about 14 a frame).
+- Still open: the process's private memory stands near 19 GB in Goodsprings and passes
+  15 GB within five seconds of the runtime's start (so did the build before this pass).
+  With under about 20 GB of commit free on the machine an allocation fails and the game
+  stops or hangs [observed three times, 10 GB free]. Where it goes is not measured yet.
+
 Compared at three Goodsprings cameras against the original with New Vegas RTX
 (tools/capture/capture_frames.py, 2026-11-09): sky, sun and shadows, night, road and rock
-shading match closely. Still different: NVForever's picture is a little brighter, windows
-glow by day and the water tower's texture is brighter, no smoke plume, denser grass.
+shading match closely. Still different after the second pass (one camera compared
+again, gs_town): the water tower's texture is brighter, windows glow a little by day, no
+smoke plume, denser grass. Not compared with the original: interiors (the fill light is
+NVForever's own stand-in, the wrapper has none), night after the bearing fix, actors,
+the Pip-Boy.
 
 ## Cost
 
@@ -116,7 +155,14 @@ every 600 frames gives the build and Present times.
 
 - NVForever's sky meshes (Remix draws its own sky),
   particle systems as Remix particles (they go as meshes, made again as they change).
-- Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
+- Replacement assets: New Vegas RTX names API meshes for Remix mods by an asset key
+  (AssetKeyEXT: XXH3 of the D3D9 buffers' positions and indices, shared_mesh_keys.txt)
+  and lights by a key of their reference. NVForever sends neither, so a Remix mod's
+  mesh, material or light replacements do not apply. The install's rtx-remix\mods is
+  empty today [observed 2026-11-09].
+- The wrapper's hair layer and FaceGen skin materials, height maps (displacement),
+  particles as its unlit route, the Pip-Boy light's placement, the game-fog and decal
+  rules of its NVSE plugin.
 - The player's shadow in first person.
 
 

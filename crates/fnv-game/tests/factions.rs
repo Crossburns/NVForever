@@ -1304,7 +1304,7 @@ fn a_planted_kill_counts_for_the_weapon_the_player_holds() {
         f.data.challenge_defs.insert(c, def);
     }
     let mut g = game(&f);
-    g.extra.entry(victim).or_default().last_hit = Some(fnv_game::game::LastHit { attacker: Some(FormId::PLAYER_REF), weapon: Some(gun), location: 0, critical: false });
+    g.extra.entry(victim).or_default().last_hit = Some(fnv_game::game::LastHit { attacker: Some(FormId::PLAYER_REF), weapon: Some(gun), location: 0, critical: false, penetrated: None });
     assert!(plant_and_wait(&mut g, victim, FRAG)[0].killed);
     let progress = |c: FormId| g.player.challenges.get(&c).map_or(0, |c| c.progress);
     assert_eq!((progress(by_fists), progress(by_gun)), (1, 0));

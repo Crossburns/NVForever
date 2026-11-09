@@ -103,6 +103,9 @@ pub struct MaterialDesc {
     pub alpha_test: Option<u8>,
     /// Blended over what is behind, by this blend type (`BLEND_*`), or `None` for not.
     pub blend: Option<i32>,
+    /// A layered material's tint texture (RGB multiplied over the blended layers, read at
+    /// the weight textures' coordinates): a land quadrant's vertex colours.
+    pub tint: Option<u64>,
 }
 
 /// An instance's alpha state (see [`Remix::draw_instance_skinned`]).
@@ -112,6 +115,10 @@ pub struct InstanceAlpha {
     pub test: Option<u8>,
     /// Blended over what is behind by its alpha.
     pub blend: bool,
+    /// The vertex colour is baked lighting: the runtime keeps its hue and drops its
+    /// brightness (`rtx.vertexColorIsBakedLighting`). False for a real colour (unlit
+    /// effects, particles).
+    pub baked: bool,
 }
 
 impl Remix {
@@ -250,6 +257,7 @@ impl Remix {
         // The terrain extension's strings, kept alive for the call.
         let layer_refs: Vec<(Vec<u16>, Option<Vec<u16>>)> = terrain.map(|t| t.0.iter().take(TERRAIN_MAX_LAYERS).map(|(a, n)| (texture_ref(*a), n.map(texture_ref))).collect()).unwrap_or_default();
         let weight_refs: Vec<Vec<u16>> = terrain.map(|t| t.1.iter().map(|w| texture_ref(*w)).collect()).unwrap_or_default();
+        let tint_ref = m.tint.map(texture_ref);
         let mut layered = terrain.map(|(_, _, scale, offset)| {
             let mut albedo = [none.as_ptr(); TERRAIN_MAX_LAYERS];
             let mut normal = [none.as_ptr(); TERRAIN_MAX_LAYERS];
@@ -264,7 +272,7 @@ impl Remix {
                 albedoTextures: albedo,
                 normalTextures: normal,
                 weightTextures: [weight_refs[0].as_ptr(), weight_refs[1].as_ptr()],
-                tintTexture: none.as_ptr(),
+                tintTexture: tint_ref.as_ref().map_or(none.as_ptr(), |w| w.as_ptr()),
                 weightUvScale: Float2D { x: scale[0], y: scale[1] },
                 weightUvOffset: Float2D { x: offset[0], y: offset[1] },
                 normalsRgbTangentSpace: 1,
@@ -381,6 +389,33 @@ impl Remix {
         Ok(h)
     }
 
+    /// New vertices for the live mesh made under `hash`, its triangles the same: the
+    /// handle and its instances stay and the runtime refits its acceleration structure
+    /// [documented: remix_c.h, MeshInfoRefreshGeometryEXT]. False when the runtime did
+    /// not take it as that mesh (make it again then).
+    pub fn refresh_mesh(&self, hash: u64, mesh: MeshHandle, vertices: &[HardcodedVertex], indices: &[u32], material: MaterialHandle) -> bool {
+        #[repr(C)]
+        struct Refresh {
+            s_type: u32,
+            p_next: *mut c_void,
+        }
+        let mut ext = Refresh { s_type: 29, p_next: std::ptr::null_mut() };
+        let surface = MeshInfoSurfaceTriangles {
+            vertices_values: vertices.as_ptr(),
+            vertices_count: vertices.len() as u64,
+            indices_values: indices.as_ptr(),
+            indices_count: indices.len() as u64,
+            skinning_hasvalue: 0,
+            skinning_value: MeshInfoSkinning { bonesPerVertex: 0, blendWeights_values: std::ptr::null(), blendWeights_count: 0, blendIndices_values: std::ptr::null(), blendIndices_count: 0 },
+            material,
+        };
+        let info = MeshInfo { sType: ST_MESH_INFO, pNext: (&mut ext as *mut Refresh).cast(), hash, surfaces_values: &surface, surfaces_count: 1 };
+        let mut h = std::ptr::null_mut();
+        // SAFETY: checked present in load; arrays valid for the call (the runtime copies).
+        let code = unsafe { (self.api.CreateMesh.unwrap_unchecked())(&info, &mut h) };
+        code == SUCCESS && h == mesh
+    }
+
     pub fn destroy_mesh(&self, h: MeshHandle) {
         if let Some(f) = self.api.DestroyMesh {
             // SAFETY: a handle this runtime made.
@@ -425,29 +460,32 @@ impl Remix {
     /// `alpha`: the instance's alpha state, for a material made with
     /// [`MaterialDesc::draw_call_alpha`]: alpha is the texture's times the vertex colour's.
     pub fn draw_instance_skinned(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, bones: &[Transform], alpha: Option<InstanceAlpha>) -> Result<(), Error> {
+        // As New Vegas RTX's vertex_color_blend and alpha_blend [documented: the wrapper's
+        // api_material.cpp]: colour texture x vertex colour; alpha the texture's, times the
+        // vertex colour's when blended or tested; D3D9 blends alpha by the colour factors.
         let mut blend = alpha.map(|a| InstanceInfoBlendEXT {
             sType: ST_INSTANCE_INFO_BLEND_EXT,
             pNext: std::ptr::null_mut(),
             alphaTestEnabled: u32::from(a.test.is_some()),
             alphaTestReferenceValue: a.test.unwrap_or(0),
-            alphaTestCompareOp: VK_COMPARE_GREATER_OR_EQUAL,
+            alphaTestCompareOp: if a.test.is_some() { VK_COMPARE_GREATER_OR_EQUAL } else { 7 },
             alphaBlendEnabled: u32::from(a.blend),
-            srcColorBlendFactor: VK_BLEND_SRC_ALPHA,
-            dstColorBlendFactor: VK_BLEND_ONE_MINUS_SRC_ALPHA,
+            srcColorBlendFactor: if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE },
+            dstColorBlendFactor: if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 },
             colorBlendOp: 0,
             textureColorArg1Source: TA_TEXTURE,
             textureColorArg2Source: TA_VERTEX_COLOR,
-            textureColorOperation: TOP_SELECT_ARG1,
+            textureColorOperation: TOP_MODULATE,
             textureAlphaArg1Source: TA_TEXTURE,
             textureAlphaArg2Source: TA_VERTEX_COLOR,
-            textureAlphaOperation: TOP_MODULATE,
+            textureAlphaOperation: if a.blend || a.test.is_some() { TOP_MODULATE } else { TOP_SELECT_ARG1 },
             tFactor: 0xFFFF_FFFF,
             isTextureFactorBlend: 0,
-            srcAlphaBlendFactor: VK_BLEND_ONE,
-            dstAlphaBlendFactor: VK_BLEND_ONE_MINUS_SRC_ALPHA,
+            srcAlphaBlendFactor: if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE },
+            dstAlphaBlendFactor: if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 },
             alphaBlendOp: 0,
             writeMask: 0xF,
-            isVertexColorBakedLighting: 0,
+            isVertexColorBakedLighting: u32::from(a.baked),
         });
         let blend_ptr: *mut c_void = blend.as_mut().map_or(std::ptr::null_mut(), |b| (b as *mut InstanceInfoBlendEXT).cast());
         let mut ext = InstanceInfoBoneTransformsEXT { sType: ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT, pNext: blend_ptr, boneTransforms_values: bones.as_ptr(), boneTransforms_count: bones.len().min(MAX_BONES) as u32 };

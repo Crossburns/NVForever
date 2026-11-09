@@ -349,7 +349,7 @@ impl Game<'_> {
             let killed = self.explosive_harms(p.victim, &p.blast);
             if killed {
                 let weapon = crate::functions::equipped_weapon_of(self, FormId::PLAYER_REF);
-                self.extra.entry(p.victim).or_default().last_hit = Some(crate::game::LastHit { attacker: Some(FormId::PLAYER_REF), weapon, location: -1, critical: false });
+                self.extra.entry(p.victim).or_default().last_hit = Some(crate::game::LastHit { attacker: Some(FormId::PLAYER_REF), weapon, location: -1, critical: false, penetrated: None });
                 self.pickpocket.blast_witnesses = p.seen_by;
                 self.kill(p.victim, Some(FormId::PLAYER_REF));
                 self.pickpocket.blast_witnesses.clear();

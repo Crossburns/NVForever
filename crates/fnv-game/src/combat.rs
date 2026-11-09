@@ -140,6 +140,10 @@ pub struct HitInfo {
     pub critical: bool,
     /// The body part's limb damage, when the hit is on a part with a condition.
     pub limb: Option<LimbHit>,
+    /// Whether the blow got through the target's Damage Threshold (more than the floor
+    /// share of its damage was left after it), when the weapon formula ran; `None` for a
+    /// hit with no armour step (a script's, a fall, drowning).
+    pub penetrated: Option<bool>,
 }
 
 /// The limb-condition actor value code of a BPTD part's actor value name.
@@ -587,7 +591,7 @@ impl Game<'_> {
         self.jip_event("hit", Some(target), Vec::new());
         actor::add_damage(self, target, HEALTH, dealt);
         let players_side = info.attacker.is_some_and(|a| self.kill_earns_xp(a));
-        let this_hit = crate::game::LastHit { attacker: info.attacker, weapon: info.weapon, location: info.location, critical: info.critical };
+        let this_hit = crate::game::LastHit { attacker: info.attacker, weapon: info.weapon, location: info.location, critical: info.critical, penetrated: info.penetrated };
         {
             let e = self.extra.entry(target).or_default();
             e.last_hit = Some(this_hit);
