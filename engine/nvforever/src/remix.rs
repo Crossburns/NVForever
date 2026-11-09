@@ -940,7 +940,9 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
             // rtx.automation.disableBlockingDialogBoxes].
             let conf = work.join("rtx.conf");
             let mut text = std::fs::read_to_string(&conf).unwrap_or_default();
-            text.push_str("\n# NVForever\nrtx.automation.disableBlockingDialogBoxes = True\n");
+            // No splash banner either ("Welcome to New Vegas RTX … Closing in", across the
+            // top for 20 s) [documented: the runtime's dxvk_imgui_splash, hideSplashMessage].
+            text.push_str("\n# NVForever\nrtx.automation.disableBlockingDialogBoxes = True\nrtx.hideSplashMessage = True\n");
             let _ = std::fs::write(&conf, text);
             let mods = r.join("rtx-remix").join("mods");
             if mods.is_dir() {
