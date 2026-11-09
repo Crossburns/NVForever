@@ -75,7 +75,7 @@ fn yes(b: bool) -> XVal {
 
 /// The answer of a function with output variables (`fnv_script::vm`'s out_call): the
 /// return value, then the outputs.
-fn outputs(g: &mut Game, ret: XVal, outs: &[f64]) -> XVal {
+pub(crate) fn outputs(g: &mut Game, ret: XVal, outs: &[f64]) -> XVal {
     let entries = std::iter::once(ret).chain(outs.iter().map(|v| XVal::Num(*v))).enumerate().map(|(i, v)| (fnv_script::vm::XKey::Num(i as f64), v)).collect();
     XVal::Array(g.ext.new_array(fnv_script::vm::ArrayKind::List, entries))
 }

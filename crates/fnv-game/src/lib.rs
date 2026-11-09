@@ -105,6 +105,7 @@ pub mod script_runner;
 pub mod nvse_sup1;
 pub mod nvse_sup3;
 pub mod nvse_hnd1;
+pub mod nvse_hnd2;
 pub mod nvse_sup6;
 pub mod nvse_sup5;
 pub mod image_files;

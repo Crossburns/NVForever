@@ -102,3 +102,12 @@ fn set_objective_text_changes_get_objective_text_only_for_objectives_that_exist(
     let mut g = game(&f);
     assert_eq!(q(&mut g, "SetObjectiveText Player 10 \"x %g\" 5\nSetFunctionValue (GetObjectiveText Player 10)"), XVal::Str(String::new()));
 }
+
+#[test]
+fn hnd2_session_values_read_back() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(q(&mut g, "SetSmoothIronsightsValue 2 0.5\nSetFunctionValue (GetSmoothIronsightsValue 2)"), XVal::Num(0.5));
+    assert_eq!(q(&mut g, "SetFunctionValue (GetSmoothIronsightsValue 3)"), XVal::Num(0.0));
+    assert_eq!(q(&mut g, "int r\nint gr\nint b\nGetSystemColorAlt 4 r gr b\nSetFunctionValue gr"), XVal::Num(255.0));
+}

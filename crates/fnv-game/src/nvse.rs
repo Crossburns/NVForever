@@ -378,6 +378,9 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
     if let Some(r) = crate::nvse_hnd1::call(g, ctx, name, subject, args) {
         return Some(r);
     }
+    if let Some(r) = crate::nvse_hnd2::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
     // The item a getter reads: its argument, else the calling reference's base form.
     let item = |g: &Game, k: usize| -> Option<FormId> {
         as_form(args.get(k)).or(subject).map(|f| crate::functions::base_of(g, f).unwrap_or(f))
