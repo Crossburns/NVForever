@@ -341,6 +341,13 @@ pub fn read_record(
                         let ty = match v.get("type") {
                             Some(Value::String(t)) if t == "Integer" => VarType::Int,
                             Some(Value::String(t)) if t == "FloatOrRef" => VarType::FloatOrRef,
+                            // The types an xNVSE-aware editor writes [documented: xEdit
+                            // SLSD, "String (xNVSE)" …; observed: High and Dry's
+                            // DistanceBasedDamageModel.esp]: the kinds NVForever's VM
+                            // knows by their source keywords.
+                            Some(Value::String(t)) if t == "String (xNVSE)" => VarType::Other("string_var".into()),
+                            Some(Value::String(t)) if t == "Array (xNVSE)" => VarType::Other("array_var".into()),
+                            Some(Value::String(t)) if t == "Ref (xNVSE)" => VarType::FloatOrRef,
                             Some(t) => VarType::Other(t.to_string()),
                             None => VarType::Other(String::new()),
                         };

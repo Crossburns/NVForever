@@ -1816,6 +1816,13 @@ pub(crate) fn run_scripts(
                         info!("scripts: sources that do not compile, for example {s}");
                     }
                 }
+                // Diagnostic aid: `NVF_DEBUG_UNIT=<plugin>|<owner>` logs that unit's
+                // variables, with every unit of the same owner label.
+                if let Ok(want) = std::env::var("NVF_DEBUG_UNIT") {
+                    for c in data.units.iter().filter(|c| c.key().eq_ignore_ascii_case(&want) || c.key().ends_with(want.rsplit('|').next().unwrap_or(""))) {
+                        info!("debug unit {}: source {}, raw {}, variables {:?}", c.key(), c.unit.source.is_some(), c.raw, c.unit.variables);
+                    }
+                }
                 let running = rt.game.quests.values().filter(|q| q.running).count();
                 info!(
                     "scripts ready in {secs:.2} s: {} units, {} scripts, {} quests ({running} start-game-enabled quests running)",
