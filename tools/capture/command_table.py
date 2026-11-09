@@ -171,7 +171,7 @@ def extend(table, catalogue):
 
 def add_aliases(table, catalogue):
     """Aliases the game registers that a catalogue row lacks (GPCDEx for
-    GetPlayerControlsDisabledAltEx), when no other row has that name."""
+    GetPlayerControlsDisabledAltEx), when no other row has that name; not one-letter ones."""
     known = set()
     for f in catalogue["functions"]:
         known.add(f["name"].lower())
@@ -183,7 +183,8 @@ def add_aliases(table, catalogue):
         if not c:
             continue
         for a in c["aliases"]:
-            if a.lower() not in known:
+            # One-letter aliases (Rand's "r") are left out: scripts name variables so.
+            if len(a) > 1 and a.lower() not in known:
                 f.setdefault("aliases", []).append(a)
                 known.add(a.lower())
                 added.append(a)
