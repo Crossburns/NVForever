@@ -98,6 +98,8 @@ struct RemixState {
     why: [u32; 4],
     shot_raised: bool,
     shot_taken: bool,
+    /// The UI overlay's last picture and its size.
+    ui_last: Option<(Vec<u8>, (u32, u32))>,
     /// Shapes left out (test aid: NVF_REMIX_TRACE_HIDE).
     hidden: HashSet<(AssetId<Mesh>, UntypedAssetId)>,
     /// Time in `frame` building the scene and in `present`, since the last stats line.
@@ -696,10 +698,14 @@ fn frame(
 
     st.why = why;
     // The HUD and menus over the traced image.
+    // Every frame, with the last picture read back until a newer one comes (a frame
+    // without it showed no HUD: flicker) [observed 2026-11-09].
     if let Some(ui) = &ui {
         if let Some(px) = ui.pixels.lock().ok().and_then(|mut p| p.take()) {
-            let (w, h) = ui.size;
-            if st.remix.draw_overlay(&px, w, h, 1.0).is_err() {
+            st.ui_last = Some((px, ui.size));
+        }
+        if let Some((px, (w, h))) = &st.ui_last {
+            if (*w, *h) == ui.size && st.remix.draw_overlay(px, *w, *h, 1.0).is_err() {
                 st.errors += 1;
             }
         }
@@ -887,6 +893,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         why: [0; 4],
         shot_raised: false,
         shot_taken: false,
+        ui_last: None,
         hidden: HashSet::new(),
         build_time: Default::default(),
         present_time: Default::default(),
