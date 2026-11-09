@@ -25,6 +25,10 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   sphere lights, directional lights as distant lights, in the game's light scale
   (Bevy's values over `sky::light_unit`); then Present. Additive shapes (light shafts,
   glows) are not sent.
+- **HUD and menus.** A 2D camera, the default UI camera, draws Bevy's interface into
+  an RGBA image with a transparent background; a GPU readback of it each frame goes to
+  Remix's screen overlay (`DrawScreenOverlay`), over the traced image. Menus with their
+  own cameras (Pip-Boy screen, terminals) are not on it yet.
 - **The player.** In first person the third-person body is not sent (Remix's
   player-model masking follows Portal's camera and still showed the head); shapes only
   on the shadow layer go as Remix's third-person player model.
@@ -38,8 +42,6 @@ they are (`DEFAULT_MODS_DIR`). NVForever writes nothing into the install or the 
 
 ## Not yet
 
-- The HUD and menus: Bevy draws them under the Remix window; `DrawScreenOverlay` is
-  wired in the wrapper but not fed.
 - Terrain layers (only each chunk's base texture), water, sky meshes, grass and tree
   materials (their own material types), particles.
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).

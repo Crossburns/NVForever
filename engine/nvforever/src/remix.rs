@@ -40,6 +40,7 @@ impl Plugin for RemixPlugin {
         app.world_mut().insert_non_send(RemixStateCell::default());
         app.insert_resource(self.0.clone())
             .init_resource::<CpuMeshes>()
+            .add_systems(Startup, setup_ui_overlay)
             .add_systems(PostUpdate, (take_new_meshes, take_new_images).after(AssetEventSystems))
             .add_systems(Last, (frame, shut_down_on_exit).chain());
     }
@@ -237,6 +238,7 @@ fn frame(
     children: Query<&Children>,
     shapes: Query<ShapeParts>,
     joints: Query<&GlobalTransform>,
+    ui: Option<Res<UiOverlay>>,
     bindposes: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     materials: Res<Assets<NifMaterial>>,
     meshes_all: Res<Assets<Mesh>>,
@@ -488,6 +490,15 @@ fn frame(
     }
 
     st.why = why;
+    // The HUD and menus over the traced image.
+    if let Some(ui) = &ui {
+        if let Some(px) = ui.pixels.lock().ok().and_then(|mut p| p.take()) {
+            let (w, h) = ui.size;
+            if st.remix.draw_overlay(&px, w, h, 1.0).is_err() {
+                st.errors += 1;
+            }
+        }
+    }
     if st.remix.present().is_err() {
         st.errors += 1;
     }
@@ -669,4 +680,50 @@ fn shut_down_on_exit(mut exit: MessageReader<AppExit>, cell: Option<NonSendMut<R
         }
         c.failed = true;
     }
+}
+
+/// The HUD and menus, drawn by Bevy into an image instead of the window (Remix covers
+/// the window) and read back each frame for Remix's screen overlay: a 2D camera that is
+/// the default UI camera, with a transparent background.
+#[derive(Resource)]
+struct UiOverlay {
+    size: (u32, u32),
+    pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+}
+
+fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, window: Query<&Window, With<PrimaryWindow>>) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::camera::{ClearColorConfig, RenderTarget};
+    use bevy::render::gpu_readback::{Readback, ReadbackComplete};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureUsages};
+    let (w, h) = window.single().map(|w| (w.physical_width().max(1), w.physical_height().max(1))).unwrap_or((1280, 720));
+    let mut image = Image::new_uninit(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+    image.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::RENDER_ATTACHMENT;
+    let image = images.add(image);
+    commands.spawn((
+        Name::new("Remix UI camera"),
+        Camera2d,
+        Camera { order: 1000, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() },
+        RenderTarget::Image(image.clone().into()),
+        IsDefaultUiCamera,
+        Msaa::Off,
+    ));
+    let pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>> = Arc::default();
+    let sink = pixels.clone();
+    // Rows come back padded to 256 bytes [documented: wgpu COPY_BYTES_PER_ROW_ALIGNMENT,
+    // bevy_render gpu_readback get_aligned_size].
+    let row = (w * 4) as usize;
+    let stride = row.div_ceil(256) * 256;
+    commands.spawn(Readback::texture(image)).observe(move |ev: On<ReadbackComplete>| {
+        let data = &ev.data;
+        let out = if stride == row {
+            data.clone()
+        } else {
+            data.chunks(stride).take(h as usize).flat_map(|r| r[..row.min(r.len())].iter().copied()).collect()
+        };
+        if let Ok(mut p) = sink.lock() {
+            *p = Some(out);
+        }
+    });
+    commands.insert_resource(UiOverlay { size: (w, h), pixels });
 }
