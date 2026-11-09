@@ -127,6 +127,15 @@ fn rig_names(r: u32, actors: &Query<(Entity, &ActorRig)>) -> HashMap<Entity, Str
         .unwrap_or_default()
 }
 
+/// [`rig_names`], and for the player its third-person skeleton's (`root_for`).
+fn rig_for(r: u32, actors: &Query<(Entity, &ActorRig)>, body: Option<&crate::player_body::PlayerBody>) -> HashMap<Entity, String> {
+    let rig = rig_names(r, actors);
+    if rig.is_empty() && r == fnv_sim::FormId::PLAYER_REF.0 {
+        return body.map(|b| b.third_names()).unwrap_or_default();
+    }
+    rig
+}
+
 /// A node's name: its `Name`, else the rig's.
 fn name_of(e: Entity, nodes: &NodeQuery, rig: &HashMap<Entity, String>) -> String {
     nodes.get(e).ok().and_then(|n| n.0.map(|n| n.as_str().to_string())).or_else(|| rig.get(&e).cloned()).unwrap_or_default()
@@ -161,7 +170,7 @@ fn mirror(
             SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Material { r, .. } => *r,
         };
         let Some(root) = root_for(r.0, &actors, &visuals, body.as_deref()) else { continue };
-        let rig = rig_names(r.0, &actors);
+        let rig = rig_for(r.0, &actors, body.as_deref());
         match edit {
             // A transform a script sets holds over the animation, frame after frame
             // [observed: set-then-read stays exact on an animated bone].
@@ -243,7 +252,7 @@ fn mirror(
     let keys: Vec<(u32, String)> = held.keys().cloned().collect();
     for (r, node) in keys {
         let Some(root) = root_for(r, &actors, &visuals, body.as_deref()) else { continue };
-        let rig = rig_names(r, &actors);
+        let rig = rig_for(r, &actors, body.as_deref());
         let h = held[&(r, node.clone())];
         if let Some(mut t) = find(root, &node, &nodes, &rig).and_then(|e| nodes.get_mut(e).ok()) {
             if let Some(v) = h.translation {
@@ -267,7 +276,7 @@ fn mirror(
             rt.game.scene.forget(r);
             continue;
         };
-        let rig = rig_names(r.0, &actors);
+        let rig = rig_for(r.0, &actors, body.as_deref());
         let mut seen: HashMap<String, u32> = HashMap::new();
         let model = fnv_game::nif_blocks::model_of(&rt.game, r).unwrap_or_default();
         let table = match data.as_deref() {

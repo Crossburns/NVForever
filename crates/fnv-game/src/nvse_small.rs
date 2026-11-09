@@ -571,8 +571,25 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "stewiegetvalue" | "stewval" => {
             let ks = text(args, 0);
             let Some((key, section)) = ks.split_once(':') else { return Some(Ok(zero)) };
-            let ini = g.mod_files.read_text("NVSE\\Plugins\\nvse_stewie_tweaks.ini");
-            match ini.and_then(|t| crate::mod_files::ini_get(&t, &section.trim().to_ascii_lowercase(), key.trim())) {
+            let (section, key) = (section.trim().to_ascii_lowercase(), key.trim().to_string());
+            let main = g.mod_files.read_text("NVSE\\Plugins\\nvse_stewie_tweaks.ini");
+            let mut v = main.as_deref().and_then(|t| crate::mod_files::ini_get(t, &section, &key));
+            // With `[INI] bMultiINISupport = 1`, the INIs in Data\NVSE\Plugins\Tweaks\INIs
+            // overwrite the main one [documented: Stewie Tweaks Readme.txt, bMultiINISupport],
+            // in name order, the last one read winning [hypothesis: Keybinder names its
+            // file zzzzKeybinder.ini to come last].
+            let multi = main.as_deref().and_then(|t| crate::mod_files::ini_get(t, "ini", "bMultiINISupport")).is_some_and(|m| m.trim() == "1");
+            if multi {
+                for f in crate::mod_files::files_in("NVSE\\Plugins\\Tweaks\\INIs") {
+                    if !f.to_ascii_lowercase().ends_with(".ini") {
+                        continue;
+                    }
+                    if let Some(x) = g.mod_files.read_text(&format!("NVSE\\Plugins\\Tweaks\\INIs\\{f}")).and_then(|t| crate::mod_files::ini_get(&t, &section, &key)) {
+                        v = Some(x);
+                    }
+                }
+            }
+            match v {
                 Some(v) => v.parse::<f64>().map(XVal::Num).unwrap_or(XVal::Str(v.trim_matches('"').to_string())),
                 None => zero,
             }

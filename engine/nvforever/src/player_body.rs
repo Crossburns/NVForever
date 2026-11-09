@@ -733,6 +733,13 @@ impl PlayerBody {
     pub fn third_root(&self) -> Option<Entity> {
         self.body.as_ref().map(|b| b.third.root)
     }
+
+    /// The third-person skeleton's node names by entity (its nodes carry no `Name`).
+    pub fn third_names(&self) -> std::collections::HashMap<Entity, String> {
+        let Some(b) = &self.body else { return Default::default() };
+        let a = &b.third.animator;
+        a.nodes.iter().zip(&a.skel.names).filter_map(|(e, n)| n.clone().map(|n| (*e, n))).collect()
+    }
 }
 
 /// State kept across body rebuilds (an outfit change rebuilds the body).
