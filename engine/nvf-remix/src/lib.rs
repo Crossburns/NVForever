@@ -98,8 +98,8 @@ pub struct MaterialDesc {
     pub metallic: f32,
     /// Alpha-tested at this reference (0-255), or `None` for opaque.
     pub alpha_test: Option<u8>,
-    /// Alpha-blended.
-    pub blend: bool,
+    /// Blended over what is behind, by this blend type (`BLEND_*`), or `None` for not.
+    pub blend: Option<i32>,
 }
 
 impl Remix {
@@ -222,9 +222,8 @@ impl Remix {
             heightTexture: none.as_ptr(),
             displaceIn: 0.0,
             useDrawCallAlphaState: 0,
-            blendType_hasvalue: u32::from(m.blend),
-            // BlendType 0 alpha [documented: the runtime's surface_shared.h, BlendType].
-            blendType_value: 0,
+            blendType_hasvalue: u32::from(m.blend.is_some()),
+            blendType_value: m.blend.unwrap_or(BLEND_ALPHA),
             invertedBlend: 0,
             // AlphaTestType 6 greater-or-equal, 7 always (no test) [documented: the
             // runtime's surface_shared.h, AlphaTestType, the D3D compare order less 1].

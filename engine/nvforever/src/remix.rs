@@ -41,6 +41,7 @@ impl Plugin for RemixPlugin {
         app.insert_resource(self.0.clone())
             .init_resource::<CpuMeshes>()
             .add_systems(Startup, setup_ui_overlay)
+            .add_systems(PostUpdate, resize_ui_overlay)
             .init_resource::<LiveTextures>()
             .add_systems(PostUpdate, ((take_new_meshes, take_new_images), watch_live_textures).chain().after(AssetEventSystems))
             .add_systems(Last, (frame, shut_down_on_exit).chain());
@@ -97,6 +98,9 @@ struct RemixState {
     why: [u32; 4],
     shot_raised: bool,
     shot_taken: bool,
+    /// Time in `frame` building the scene and in `present`, since the last stats line.
+    build_time: std::time::Duration,
+    present_time: std::time::Duration,
 }
 
 fn hash_of<T: Hash>(t: &T) -> u64 {
@@ -351,6 +355,7 @@ fn frame(
         }
     }
     let Some(st) = cell.state.as_mut() else { return };
+    let t0 = std::time::Instant::now();
     st.child.follow();
 
     for id in std::mem::take(&mut cpu.skipped_images) {
@@ -498,11 +503,6 @@ fn frame(
             0
         };
         why[0] += 1;
-        // Additive shapes (light shafts, glows) are no surfaces to the path tracer
-        // [design: they would trace as lit sheets; their light comes from the lights].
-        if matches!(base.alpha_mode, AlphaMode::Add) {
-            continue;
-        }
         let key = (mesh, mat);
         let handle = match st.terrain.get(&mesh).or_else(|| st.meshes.get(&key)) {
             Some(h) => *h,
@@ -673,9 +673,12 @@ fn frame(
             }
         }
     }
+    let t1 = std::time::Instant::now();
+    st.build_time += t1 - t0;
     if st.remix.present().is_err() {
         st.errors += 1;
     }
+    st.present_time += t1.elapsed();
     st.frames += 1;
     // Test aid: NVF_REMIX_SHOT=<seconds>:<file.bmp> saves what the Remix window shows,
     // that long after the runtime started (the window is brought to the front first).
@@ -695,6 +698,10 @@ fn frame(
     }
     if st.frames % 600 == 1 {
         info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3]);
+        let n = 600.0;
+        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n);
+        st.build_time = Default::default();
+        st.present_time = Default::default();
     }
 }
 
@@ -733,9 +740,13 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
     let c = b.base_color.to_linear();
     let e = b.emissive;
     let (alpha_test, blend) = match b.alpha_mode {
-        AlphaMode::Mask(t) => (Some((t * 255.0) as u8), false),
-        AlphaMode::Blend | AlphaMode::Premultiplied | AlphaMode::Add | AlphaMode::Multiply => (None, true),
-        _ => (None, false),
+        AlphaMode::Mask(t) => (Some((t * 255.0) as u8), None),
+        AlphaMode::Blend | AlphaMode::Premultiplied => (None, Some(ffi::BLEND_ALPHA)),
+        // Glows, fire, flashes: added over the picture as emission [documented:
+        // surface_shared.h, kAlphaEmissive].
+        AlphaMode::Add => (None, Some(ffi::BLEND_ALPHA_EMISSIVE)),
+        AlphaMode::Multiply => (None, Some(ffi::BLEND_MULTIPLICATIVE)),
+        _ => (None, None),
     };
     let desc = nvf_remix::MaterialDesc {
         hash: hash_of(&id),
@@ -838,6 +849,8 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         why: [0; 4],
         shot_raised: false,
         shot_taken: false,
+        build_time: Default::default(),
+        present_time: Default::default(),
     })
 }
 
@@ -867,12 +880,56 @@ struct UiOverlay {
     image: AssetId<Image>,
     size: (u32, u32),
     pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    readback: Entity,
+}
+
+/// The overlay's readback of `image` at `w`×`h` into `sink`.
+fn spawn_ui_readback(commands: &mut Commands, image: Handle<Image>, w: u32, h: u32, sink: Arc<std::sync::Mutex<Option<Vec<u8>>>>) -> Entity {
+    use bevy::render::gpu_readback::{Readback, ReadbackComplete};
+    // Rows come back padded to 256 bytes [documented: wgpu COPY_BYTES_PER_ROW_ALIGNMENT,
+    // bevy_render gpu_readback get_aligned_size].
+    let row = (w * 4) as usize;
+    let stride = row.div_ceil(256) * 256;
+    commands
+        .spawn(Readback::texture(image))
+        .observe(move |ev: On<ReadbackComplete>| {
+            let data = &ev.data;
+            // A frame read before a resize has the old size: dropped.
+            if data.len() < stride * (h as usize - 1) + row || data.len() > stride * h as usize {
+                return;
+            }
+            let out = if stride == row { data[..row * h as usize].to_vec() } else { data.chunks(stride).take(h as usize).flat_map(|r| r[..row.min(r.len())].iter().copied()).collect() };
+            if let Ok(mut p) = sink.lock() {
+                *p = Some(out);
+            }
+        })
+        .id()
+}
+
+/// The overlay follows the window's size.
+fn resize_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, window: Query<&Window, With<PrimaryWindow>>, ui: Option<ResMut<UiOverlay>>) {
+    let Some(mut ui) = ui else { return };
+    let Ok(win) = window.single() else { return };
+    let (w, h) = (win.physical_width().max(1), win.physical_height().max(1));
+    if (w, h) == ui.size {
+        return;
+    }
+    let Some(handle) = images.get_strong_handle(ui.image) else { return };
+    if let Some(mut img) = images.get_mut(ui.image) {
+        img.resize(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
+    }
+    commands.entity(ui.readback).despawn();
+    if let Ok(mut p) = ui.pixels.lock() {
+        *p = None;
+    }
+    ui.readback = spawn_ui_readback(&mut commands, handle, w, h, ui.pixels.clone());
+    info!("remix: UI overlay {}x{} -> {w}x{h}", ui.size.0, ui.size.1);
+    ui.size = (w, h);
 }
 
 fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, window: Query<&Window, With<PrimaryWindow>>) {
     use bevy::asset::RenderAssetUsages;
     use bevy::camera::{ClearColorConfig, RenderTarget};
-    use bevy::render::gpu_readback::{Readback, ReadbackComplete};
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureUsages};
     let (w, h) = window.single().map(|w| (w.physical_width().max(1), w.physical_height().max(1))).unwrap_or((1280, 720));
     let mut image = Image::new_uninit(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
@@ -888,23 +945,8 @@ fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, w
         Msaa::Off,
     ));
     let pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>> = Arc::default();
-    let sink = pixels.clone();
-    // Rows come back padded to 256 bytes [documented: wgpu COPY_BYTES_PER_ROW_ALIGNMENT,
-    // bevy_render gpu_readback get_aligned_size].
-    let row = (w * 4) as usize;
-    let stride = row.div_ceil(256) * 256;
-    commands.spawn(Readback::texture(image)).observe(move |ev: On<ReadbackComplete>| {
-        let data = &ev.data;
-        let out = if stride == row {
-            data.clone()
-        } else {
-            data.chunks(stride).take(h as usize).flat_map(|r| r[..row.min(r.len())].iter().copied()).collect()
-        };
-        if let Ok(mut p) = sink.lock() {
-            *p = Some(out);
-        }
-    });
-    commands.insert_resource(UiOverlay { image: image_id, size: (w, h), pixels });
+    let readback = spawn_ui_readback(&mut commands, image, w, h, pixels.clone());
+    commands.insert_resource(UiOverlay { image: image_id, size: (w, h), pixels, readback });
 }
 
 /// Each land quadrant's base mesh with the blended layer meshes over it (same vertex grid:

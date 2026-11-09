@@ -24,8 +24,10 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   (Bevy's view culling, so an interior hides the exterior as it does in Bevy) as an
   instance, skinned ones posed by their joints in the instance's space; point lights as
   sphere lights, directional lights as distant lights, in the game's light scale
-  (Bevy's values over `sky::light_unit`); then Present. Additive shapes (light shafts,
-  glows) are not sent.
+  (Bevy's values over `sky::light_unit`); then Present. Blended materials go with
+  Remix's blend types [documented: the runtime's surface_shared.h, BlendType]: alpha
+  blend as alpha, additive (glows, lit windows, fire) as alpha-emissive, multiply as
+  multiplicative.
 - **Terrain.** A land quadrant's base mesh and its blended layer meshes (same vertex
   grid, the layer's opacity in the vertex alpha) go as one mesh with Remix Plus's
   terrain-layers material: the base and the top seven layers, weighted per vertex as the
@@ -34,8 +36,8 @@ no game executable. Crate `engine/nvf-remix` holds the API bindings and a safe w
   bark, billboard, grass) goes through the same path as the NIF material.
 - **HUD and menus.** A 2D camera, the default UI camera, draws Bevy's interface into
   an RGBA image with a transparent background; a GPU readback of it each frame goes to
-  Remix's screen overlay (`DrawScreenOverlay`), over the traced image. Menus with their
-  own cameras draw into images instead (below).
+  Remix's screen overlay (`DrawScreenOverlay`), over the traced image; the image follows
+  the window's size. Menus with their own cameras draw into images instead (below).
 - **Water.** A translucent Remix material (refractive index 1.33) in the water type's
   shallow colour's hue, absorbing over about 3000 units, drawn as animated water.
 - **Screens.** An image Bevy renders into (the Pip-Boy's screen, a terminal's) is read
@@ -53,10 +55,19 @@ The runtime works in `Documents\My Games\NVForever\remix`: copies of the install
 Remix's caches, `logs` and `captures`. The install's replacement assets are read where
 they are (`DEFAULT_MODS_DIR`). NVForever writes nothing into the install or the game.
 
+## Cost
+
+[observed: 2026-11-09, Goodsprings at 1280x800 window, HND load order, Remix Medium
+preset with DLSS-RR] about 26-30 ms a frame with Remix against 16 ms without (where
+NVForever is held by the CPU, the GPU 5 ms busy); of that, 3-5 ms building Remix's
+scene and under 1 ms in Present, Remix reporting its GPU 60-64 % busy. Bevy's own 3D
+pass under the Remix window costs 0-4 ms (0 with the sun's shadows off). The stats line
+every 600 frames gives the build and Present times.
+
 ## Not yet
 
 - Water waves (the surface is flat), NVForever's sky meshes (Remix draws its own sky),
-  particles.
+  particles (additive ones show, blended over the scene).
 - Replacement assets keyed to the original's texture hashes (New Vegas RTX's packs).
 - The player's shadow in first person.
 

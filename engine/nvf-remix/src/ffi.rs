@@ -87,6 +87,11 @@ pub const CATEGORY_SKY: u32 = 1 << 2;
 pub const CATEGORY_IGNORE: u32 = 1 << 3;
 pub const CATEGORY_IGNORE_LIGHTS: u32 = 1 << 4;
 pub const CATEGORY_ANIMATED_WATER: u32 = 1 << 17;
+/// Blend types [documented: the runtime's surface_shared.h, BlendType]: alpha over what
+/// is behind; colour times alpha added to it (a glow); multiplied with it.
+pub const BLEND_ALPHA: i32 = 0;
+pub const BLEND_ALPHA_EMISSIVE: i32 = 1;
+pub const BLEND_MULTIPLICATIVE: i32 = 7;
 pub const CATEGORY_THIRD_PERSON_PLAYER_MODEL: u32 = 1 << 18;
 pub const CATEGORY_THIRD_PERSON_PLAYER_BODY: u32 = 1 << 19;
 pub const CATEGORY_VIEW_MODEL: u32 = 1 << 26;
