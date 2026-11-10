@@ -208,3 +208,15 @@ the machine idle.
   [observed] The two agree: the drop from 50.7 (ab_ret14/15 at 14:00-14:50) is the
   machine's state since (other programs, commit free 25 GB now against 11 earlier),
   not the change. Compare frame rates only within one sitting.
+
+## 2026-11-10 15:40-15:45, same sitting: this morning's build against today's (ss_base, ss_cur)
+
+Built bd687e55c (this morning) and 63b58157e (now) in turn, ran each straight after the
+other with the same command (Goodsprings 14:00, Remix on, `--run-seconds 140`), the machine
+as it was then (other programs open: 6.4 GB of commit free during the second run).
+- bd687e55c: 8.9 fps in its first minute (worst frame 8.5 s), then
+  `memory allocation of 14745600 bytes failed` and the process ended: the failure the owner
+  saw in long sessions. 14745600 bytes is one 2560x1440 RGBA UI overlay frame, which that
+  build allocated and freed every frame.
+- 63b58157e: ran its 140 s; 28.9 fps in the first minute (loading), 40.7 fps in the second;
+  private 15.82 GB, VRAM 10.5 GB.
