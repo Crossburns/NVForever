@@ -199,3 +199,12 @@ wgpu 1408 -> 1152 MiB in blocks (multisampled colour and depth gone), private 15
 shifted first-person view): input reached the game window during them, so their frame
 rates (43.6-44.4) and picture differences are not comparable; to be measured again with
 the machine idle.
+
+## 2026-11-10 15:3x, clean rerun (ab_ret17, ab_ret18)
+
+- ab_ret17 (431e6b606, machine idle at the game window): picture back to mean 0.79/255
+  against ab_ret0; private 15.67 GB, VRAM 10.35 GB; 41.3-44.0 fps.
+- ab_ret18, the same build without the MSAA change, run straight after: 41.9-42.5 fps.
+  [observed] The two agree: the drop from 50.7 (ab_ret14/15 at 14:00-14:50) is the
+  machine's state since (other programs, commit free 25 GB now against 11 earlier),
+  not the change. Compare frame rates only within one sitting.
