@@ -190,3 +190,12 @@ Eight `player.setpos` jumps across WastelandNV, 20 s apart
   fail when commit runs out whatever RAM is free. tele2: pressed at about 180 s (commit
   6785 of 46515 MB free, GPU 85.7 %); peak 20.3 GB, end 18.4 GB, as tele1 here, where the
   GPU signal pressed as well; on a machine with less commit to spare it presses sooner.
+
+## 2026-11-10 15:1x, no multisampling on Bevy's hidden pass (ab_ret16)
+
+Under Remix (`RemixDraws`) graphics.rs gives the main camera no MSAA (the setting is kept):
+wgpu 1408 -> 1152 MiB in blocks (multisampled colour and depth gone), private 15.87 GB.
+[observed] Both ab_ret16 runs had the view moved (third person, player walking; then a
+shifted first-person view): input reached the game window during them, so their frame
+rates (43.6-44.4) and picture differences are not comparable; to be measured again with
+the machine idle.

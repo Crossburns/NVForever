@@ -632,6 +632,7 @@ fn apply(
     eye: Res<crate::eye_adapt::EyeCurve>,
     cutouts: Option<ResMut<nvf_assets::nif_material::BlendedCutouts>>,
     mut done: Local<Option<(Graphics, Msaa, bool, Vec<Entity>)>>,
+    remix: Option<Res<crate::remix::RemixDraws>>,
 ) {
     let cam_count = cams.iter().count();
     if cam_count == 0 {
@@ -643,7 +644,10 @@ fn apply(
     if let Some(mut cutouts) = cutouts {
         cutouts.set_if_neq(nvf_assets::nif_material::BlendedCutouts(fsr.is_some()));
     }
-    let want_msaa = if g.screen_aa == ScreenAa::Off && fsr.is_none() { msaa.0 } else { Msaa::Off };
+    // Under Remix the main camera's picture is never seen (remix.rs): no multisampled
+    // targets for it [observed 2026-11-10: main_texture_sampled 134 MB and multisampled
+    // depth at 2560x1440]. The setting itself is left as it is.
+    let want_msaa = if remix.is_none() && g.screen_aa == ScreenAa::Off && fsr.is_none() { msaa.0 } else { Msaa::Off };
     let aa_matches = cams.iter().all(|(_, actual_msaa, actual_fsr, taa, fxaa, smaa)| {
         *actual_msaa == want_msaa && actual_fsr.map(|f| f.quality) == fsr
             && taa == (g.screen_aa == ScreenAa::Taa && fsr.is_none())
