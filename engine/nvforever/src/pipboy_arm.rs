@@ -148,12 +148,13 @@ struct WarmUp<'w, 's> {
     cams: Query<'w, 's, &'static Camera>,
     use_pipboy: Res<'w, nvf_play::pipboy::UsePipBoy>,
     sim: Option<Res<'w, nvf_play::sim::SimState>>,
+    remix: Option<Res<'w, crate::remix::RemixDraws>>,
     state: Local<'s, WarmState>,
 }
 
 /// [design: this file, player_body.rs] Only the renderer borrows the rig: no menu or POV change.
 fn warm_up(params: WarmUp) {
-    let WarmUp { mut pip, mut loading, gate, render, body, screen, cams, use_pipboy, sim, mut state } = params;
+    let WarmUp { mut pip, mut loading, gate, render, body, screen, cams, use_pipboy, sim, remix, mut state } = params;
     if pip.phase != Phase::Raising {
         state.raise_released = false;
     }
@@ -185,7 +186,10 @@ fn warm_up(params: WarmUp) {
         let own = render.status();
         // [design: #1803] The start already waits for compilation. Only get the
         // real draws submitted here; a cold in-play raise also waits for their PSOs.
-        let submitted = !w.device || if w.covered { own.submitted() } else { own.complete() };
+        // Under Remix the picture is the runtime's: Bevy's draws of the rig (under its window,
+        // or emptied, remix.rs) are not waited for [observed 2026-11-10: the first raise
+        // held its full 3.9 s cap].
+        let submitted = !w.device || remix.is_some() || if w.covered { own.submitted() } else { own.complete() };
         let ready = submitted && posed && gate.frames().wrapping_sub(w.frames) >= WARM_FRAMES;
         // [design: this file] Closing a held raise cancels without playing the lowering clip.
         let cancelled = !w.covered && pip.phase != Phase::Raising;

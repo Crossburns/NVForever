@@ -133,3 +133,29 @@ copy, so Bevy never uploads it (`NVF_REMIX_KEEP_BEVY_MESHES=1` keeps them).
 
 Totals since the morning (Remix on, same place): private 18.7 -> 16.1 GB, VRAM (card)
 12.77 -> 10.66 GB, frames 29.1 -> 40.6 a second (p50 34.1 -> 24.2 ms).
+
+## 2026-11-10 12:0x-14:00, screens read back only while drawn; Pip-Boy raise (runs ab_ret9-14, pipt*)
+
+- Superluminal (nvf_remix_fix3): the screens' readback (`watch_live_textures`: the Pip-Boy's
+  and terminals' render targets, 1280x960) was copied, page-faulted and freed every frame,
+  2.3 ms a frame, with no screen showing. Now the readback's buffer is taken (no copy) and
+  a screen is read back only while a camera drawing into it is on; Remix keeps its last
+  picture otherwise. ab_ret9: 40.6 -> 50.6 fps (p50 24.2 -> 19.4 ms).
+- Pip-Boy check (`NVF_PLAY_TEST_PIPBOY=45:open,52:page=items`, `NVF_REMIX_SHOT`): with the
+  mesh shells (commit 6ae343113) the first raise waited its full 3.9 s cap, because
+  pipboy_arm waits for Bevy to have drawn the rig and the rig's meshes are emptied for Bevy.
+  [observed] A shot at 60 s of Remix's clock fell inside that wait and looked like a missing
+  Pip-Boy; a shot at 90 s (pipt3) showed it. Fixed at the gate: under Remix (`RemixDraws`)
+  the raise does not wait for Bevy's draws of the rig; first raise held 199 ms (pipt2),
+  device and ITEMS screen shown 4 s after opening.
+- Tried and dropped (logged for whoever comes next): emptying meshes only after Remix drew
+  their shape (rigs left whole) keeps Bevy's upload, and freeing a mesh inside Bevy's slabs
+  frees no slab: private 17.9 GB. Holding new meshes in the main world until a shape showed
+  whose they were: 15.9 GB but a held rig never reached Bevy. A GPU buffer per mesh
+  (large_threshold 1): 10 fps (9410 buffers) and no memory gain.
+- ab_ret14 (this commit): 50.7 fps (p50 19.4 ms, GPU 85 %, 16.9 ms), private 16.10 GB,
+  VRAM 10.72 GB, commit free 11.1 GB; wgpu 828 MiB in 1408 MiB of blocks; picture mean
+  difference 0.86/255 against ab_ret0.
+
+Totals since the morning (Remix on, Goodsprings 14:00): 29.1 -> 50.7 traced frames a second
+(p50 34.1 -> 19.4 ms), private memory 18.7 -> 16.1 GB, VRAM 12.77 -> 10.72 GB.

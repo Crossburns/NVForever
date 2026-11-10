@@ -43,6 +43,7 @@ pub struct RemixPlugin(pub RemixConfig);
 impl Plugin for RemixPlugin {
     fn build(&self, app: &mut App) {
         app.world_mut().insert_non_send(RemixStateCell::default());
+        app.insert_resource(RemixDraws);
         app.insert_resource(self.0.clone())
             .init_resource::<CpuMeshes>()
             .init_resource::<nvf_play::player::OverlayMenu>()
@@ -56,7 +57,7 @@ impl Plugin for RemixPlugin {
             .add_systems(Startup, setup_ui_overlay)
             .add_systems(PostUpdate, resize_ui_overlay)
             .init_resource::<LiveTextures>()
-            .add_systems(PostUpdate, ((take_new_meshes, take_new_images, take_changed_materials), watch_live_textures).chain().after(AssetEventSystems))
+            .add_systems(PostUpdate, ((take_new_meshes, take_new_images, take_changed_materials), watch_live_textures, pace_live_readbacks).chain().after(AssetEventSystems))
             .add_systems(Last, (frame, shut_down_on_exit).chain());
         // Bevy's own 3D pass under the Remix window is never seen: its main pass is drawn
         // at a few pixels (NVF_REMIX_BEVY_FULL=1 keeps it whole). Visibility, which Remix's
@@ -85,6 +86,11 @@ fn shrink_hidden_pass(mut commands: Commands, views: Query<(Entity, &bevy::rende
         }
     }
 }
+
+/// Present while the Remix runtime draws the world: what Bevy draws under its window is
+/// not seen (`pipboy_arm` does not wait for it).
+#[derive(Resource)]
+pub struct RemixDraws;
 
 /// Vertex data copied from meshes as they arrive.
 #[derive(Resource, Default)]
@@ -1089,6 +1095,7 @@ fn frame(
                     }
                 }
             }
+            bevy::render::gpu_readback::recycle_readback_data(px);
         }
     }
 
@@ -2418,6 +2425,9 @@ struct LiveTexture {
     height: u32,
     format: u32,
     pixels: Option<Vec<u8>>,
+    /// The entity reading it back, and the image (`pace_live_readbacks`).
+    readback: Entity,
+    handle: Handle<Image>,
 }
 
 fn watch_live_textures(mut commands: Commands, mut cpu: ResMut<CpuMeshes>, mut images: ResMut<Assets<Image>>, live: Res<LiveTextures>) {
@@ -2438,21 +2448,62 @@ fn watch_live_textures(mut commands: Commands, mut cpu: ResMut<CpuMeshes>, mut i
             _ => ffi::FORMAT_R8G8B8A8_UNORM,
         };
         let Some(handle) = images.get_strong_handle(id) else { continue };
-        if let Ok(mut l) = live.0.lock() {
-            l.insert(id, LiveTexture { width: w, height: h, format, pixels: None });
-        }
         let sink = live.0.clone();
         // Rows come back padded to 256 bytes (as for the UI overlay).
         let row = (w * 4) as usize;
         let stride = row.div_ceil(256) * 256;
-        commands.spawn(Readback::texture(handle)).observe(move |ev: On<ReadbackComplete>| {
-            let data = &ev.data;
-            let out: Vec<u8> = if stride == row { data.clone() } else { data.chunks(stride).take(h as usize).flat_map(|r| r[..row.min(r.len())].iter().copied()).collect() };
-            if let Ok(mut l) = sink.lock() {
-                if let Some(t) = l.get_mut(&id) {
-                    t.pixels = Some(out);
+        // The readback's own buffer is taken and its rows packed in place, as the UI
+        // overlay's [observed 2026-11-10, Superluminal: copying a screen every frame, page
+        // faults and frees included, about 2.3 ms a frame].
+        let readback = commands
+            .spawn(Readback::texture(handle.clone()))
+            .observe(move |mut ev: On<ReadbackComplete>| {
+                if ev.data.len() < stride * (h as usize - 1) + row {
+                    return;
                 }
+                let mut data = std::mem::take(&mut ev.event_mut().data);
+                if stride != row {
+                    for y in 1..h as usize {
+                        data.copy_within(y * stride..y * stride + row, y * row);
+                    }
+                }
+                data.truncate(row * h as usize);
+                if let Ok(mut l) = sink.lock() {
+                    if let Some(t) = l.get_mut(&id) {
+                        if let Some(old) = t.pixels.replace(data) {
+                            bevy::render::gpu_readback::recycle_readback_data(old);
+                        }
+                    }
+                }
+            })
+            .id();
+        if let Ok(mut l) = live.0.lock() {
+            l.insert(id, LiveTexture { width: w, height: h, format, pixels: None, readback, handle });
+        }
+    }
+}
+
+/// A screen is read back only while a camera that draws into it is on (the Pip-Boy's while
+/// it shows, a terminal's while it is open): with none on, Remix keeps its last picture. A
+/// screen no camera draws into is read back always.
+fn pace_live_readbacks(mut commands: Commands, live: Res<LiveTextures>, cameras: Query<(&Camera, &bevy::camera::RenderTarget)>, mut reading: Local<HashMap<AssetId<Image>, bool>>) {
+    use bevy::render::gpu_readback::Readback;
+    let Ok(l) = live.0.lock() else { return };
+    for (id, t) in l.iter() {
+        let drawn_by: Vec<bool> = cameras
+            .iter()
+            .filter(|(_, target)| matches!(target, bevy::camera::RenderTarget::Image(i) if i.handle.id() == *id))
+            .map(|(c, _)| c.is_active)
+            .collect();
+        let want = drawn_by.is_empty() || drawn_by.iter().any(|&on| on);
+        let now = reading.entry(*id).or_insert(true);
+        if *now != want {
+            *now = want;
+            if want {
+                commands.entity(t.readback).insert(Readback::texture(t.handle.clone()));
+            } else {
+                commands.entity(t.readback).remove::<Readback>();
             }
-        });
+        }
     }
 }
