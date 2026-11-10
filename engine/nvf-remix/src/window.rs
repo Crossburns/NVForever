@@ -66,9 +66,23 @@ unsafe extern "system" fn share_proc(h: HWND, m: u32, w: usize, l: isize) -> isi
             }
         }
     }
+    // While the menu is open it has the keyboard and mouse to itself: input messages skip the
+    // game's handler and get Windows' default handling (Alt+F4 still closes the window), so a
+    // click in the menu is not also a shot in the game.
+    if MENU_OPEN.load(Ordering::Relaxed) && is_input(m) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::DefWindowProcW;
+        // SAFETY: the default procedure for this window's message.
+        return unsafe { DefWindowProcW(h, m, w, l) };
+    }
     let prev = GAME_PROC.load(Ordering::Relaxed);
     // SAFETY: the procedure this replaced, for every message.
     unsafe { CallWindowProcW(std::mem::transmute::<isize, windows_sys::Win32::UI::WindowsAndMessaging::WNDPROC>(prev), h, m, w, l) }
+}
+
+/// Keyboard, mouse and raw input messages.
+fn is_input(m: u32) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK};
+    matches!(m, WM_INPUT | WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP | WM_CHAR | WM_SYSCHAR | WM_MOUSEWHEEL | WM_MOUSEHWHEEL) || (WM_MOUSEMOVE..=WM_XBUTTONDBLCLK).contains(&m)
 }
 
 /// The child window.

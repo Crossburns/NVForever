@@ -47,13 +47,27 @@ impl Plugin for RemixPlugin {
         app.insert_resource(self.0.clone())
             .init_resource::<CpuMeshes>()
             .init_resource::<nvf_play::player::OverlayMenu>()
-            .add_systems(PreUpdate, |mut m: ResMut<nvf_play::player::OverlayMenu>| {
-                let open = nvf_remix::window::menu_open();
-                if m.0 != open {
-                    m.0 = open;
-                    info!("remix: the runtime's menu {}", if open { "open: the pointer is free" } else { "closed" });
-                }
-            })
+            .add_systems(
+                PreUpdate,
+                (|mut m: ResMut<nvf_play::player::OverlayMenu>, keys: Option<ResMut<ButtonInput<KeyCode>>>, buttons: Option<ResMut<ButtonInput<MouseButton>>>| {
+                    let open = nvf_remix::window::menu_open();
+                    if m.0 != open {
+                        m.0 = open;
+                        info!("remix: the runtime's menu {}", if open { "open: it has the keyboard and mouse" } else { "closed" });
+                    }
+                    // Keys and buttons held as it opened are let go, and nothing pressed while
+                    // it is open reaches the game (window.rs keeps the messages from it too).
+                    if open {
+                        if let Some(mut k) = keys {
+                            k.reset_all();
+                        }
+                        if let Some(mut b) = buttons {
+                            b.reset_all();
+                        }
+                    }
+                })
+                .after(bevy::input::InputSystems),
+            )
             .add_systems(Startup, setup_ui_overlay)
             .add_systems(PostUpdate, resize_ui_overlay)
             .init_resource::<LiveTextures>()
