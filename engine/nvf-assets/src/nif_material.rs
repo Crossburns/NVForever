@@ -336,6 +336,11 @@ pub struct NifSurface {
     /// New Vegas RTX leaves these out of the traced scene [documented: its
     /// scene_statics.cpp light_card_shape, api_unlit.cpp "Not a light card"]. CPU only.
     pub light_card: bool,
+    /// The shape's base texture is moved by a texture-transform controller of its own
+    /// (scrolled, scaled or turned). With unlit alpha-over blending that is the game's
+    /// fog, mist and haze card, which New Vegas RTX hides [documented: its plugin's
+    /// fog.cpp, unlit + alpha-over + UV-animated, not a particle system]. CPU only.
+    pub uv_animated: bool,
     /// Holes (module notes, "Holes"): x the value in alpha units (0–255) at and above
     /// which the holes texture's alpha leaves a hole, negative for none; y the width of
     /// the edge band below it; z 1 turns the test round (a hole where the alpha is
@@ -450,6 +455,7 @@ impl Default for NifSurface {
             pipboy_screen: false,
             blended_cutout: None,
             light_card: false,
+            uv_animated: false,
             holes: NO_HOLES,
             holes_edge: Vec4::ONE,
             soft: Vec4::ZERO,

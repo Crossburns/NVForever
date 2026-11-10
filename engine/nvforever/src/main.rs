@@ -1501,7 +1501,8 @@ fn main() -> AppExit {
         fnv_install::ini_get(&text, "Render", "Remix").map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_file())
     });
     if let Some(dll) = remix_dll {
-        app.add_plugins(remix::RemixPlugin(remix::RemixConfig { dll }));
+        let game_dir = args.data.as_ref().and_then(|d| d.parent()).map(std::path::Path::to_path_buf);
+        app.add_plugins(remix::RemixPlugin(remix::RemixConfig { dll, game_dir }));
     }
     app.insert_resource(nvf_play::voice::VoiceSettings { play: !args.no_voice, volume: args.voice_volume, ..Default::default() });
     app.insert_resource(nvf_play::sfx::SfxSettings { play: !args.no_sound, reverb: !args.no_reverb, ..Default::default() });

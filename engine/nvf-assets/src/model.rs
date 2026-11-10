@@ -1458,6 +1458,13 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
         .chain(effect.iter())
         .flat_map(|c| c.materials.iter().filter(|m| matches!(m.target, MaterialTarget::SelfIllum | MaterialTarget::EmissiveMult)).map(|m| m.shape.clone()))
         .collect();
+    let uv_shapes: HashSet<String> = idle
+        .iter()
+        .chain(door.iter().flat_map(|d| [&d.open, &d.close]))
+        .chain(groups.iter())
+        .chain(effect.iter())
+        .flat_map(|c| c.materials.iter().filter(|m| matches!(m.target, MaterialTarget::UvOffset(_) | MaterialTarget::UvScale(_) | MaterialTarget::UvRotate)).map(|m| m.shape.clone()))
+        .collect();
     let alpha_shapes: HashSet<String> = idle
         .iter()
         .chain(door.iter().flat_map(|d| [&d.open, &d.close]))
@@ -1600,7 +1607,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             })
         });
         let (mut material, _missing) = shape_material_with(&props, &mut mesh, sink);
-        material.extension.light_card = material.base.unlit && matches!(material.base.alpha_mode, bevy::prelude::AlphaMode::Add) && (props.external_emittance() || under_billboard);
+        material.extension.uv_animated = uv_shapes.contains(&shape_name);
         if let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             for v in p {
                 let q = (out.root * t).transform_point3(Vec3::from_array(*v));
@@ -1611,6 +1618,10 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             }
         }
         let skin = shape_skin(&dec, shape, mesh.count_vertices());
+        // A light card belongs to a static: a skinned shape (an actor's) is not one
+        // [documented: the wrapper's scene_statics.cpp classify, skinned and actor-owned
+        // geometry refused before light_card_shape].
+        material.extension.light_card = skin.is_none() && material.base.unlit && matches!(material.base.alpha_mode, bevy::prelude::AlphaMode::Add) && (props.external_emittance() || under_billboard);
         if skin.is_some() {
             out.skinned += 1;
         }

@@ -259,6 +259,20 @@ pub struct MeshInfoSurfaceTriangles {
 }
 
 #[repr(C)]
+/// The key Remix mods and captures name an asset by, instead of its own hash [documented:
+/// remix_c.h remixapi_AssetKeyEXT, honoured while rtx.scene.assetKeys is on].
+pub struct AssetKeyEXT {
+    pub sType: u32,
+    pub pNext: *mut c_void,
+    pub key: u64,
+    pub aliases_values: *const u64,
+    pub aliases_count: u32,
+    pub assetName: *const std::ffi::c_char,
+}
+
+pub const ST_ASSET_KEY_EXT: u32 = 0x4E56_0002;
+
+#[repr(C)]
 pub struct MeshInfo {
     pub sType: u32,
     pub pNext: *mut c_void,

@@ -50,7 +50,7 @@ fn main() {
     let tex_hash = 0x4E56_4600_0000_0001;
     remix.create_texture(&nvf_remix::TextureData { hash: tex_hash, width: 4, height: 4, mips: 1, format: nvf_remix::ffi::FORMAT_R8G8B8A8_SRGB, data: &px, vk_format: 0, encoding: 0, replace: false }).expect("texture");
     let mat = remix
-        .create_material(&nvf_remix::MaterialDesc { hash: 0x4E56_4D00_0000_0001, albedo: Some(tex_hash), albedo_constant: [1.0; 3], opacity: 1.0, roughness: 0.6, ..Default::default() })
+        .create_material(&nvf_remix::MaterialDesc { hash: 0x4E56_4D00_0000_0001, albedo: Some(tex_hash), albedo_constant: [1.0; 3], opacity: 1.0, roughness: 0.6, wrap: [1, 1], ..Default::default() })
         .expect("material");
     let v = |p: [f32; 3], n: [f32; 3], uv: [f32; 2]| HardcodedVertex { position: p, normal: n, texcoord: uv, color: 0xFFFF_FFFF, _pad: [0; 7] };
     // Y up, Z toward the camera. A floor and an upright quad.

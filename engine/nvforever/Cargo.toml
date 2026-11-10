@@ -55,7 +55,7 @@ tracy-client = { version = "0.19", optional = true, default-features = false, fe
 [target.'cfg(windows)'.dependencies]
 # XXH3 of a texture's top level: the D3D9 image hash New Vegas RTX's rtx.conf lists name
 # textures by (remix.rs).
-twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_64"] }
+twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_64", "xxhash64"] }
 rfd = { version = "0.15", default-features = false }
 # The generated-terrain bake threads' priority (lodgen.rs) and the span profile's processor time
 # (profile.rs), the machine's RAM (memory_budget.rs) and the frame rate counter's CPU/GPU use

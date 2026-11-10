@@ -101,6 +101,13 @@ pub struct MaterialDesc {
     pub draw_call_alpha: bool,
     /// Alpha-tested at this reference (0-255), or `None` for opaque.
     pub alpha_test: Option<u8>,
+    /// The albedo's addressing, U and V, in Remix's terms: 0 clamp, 1 repeat, 2 mirrored
+    /// repeat, 3 clip [documented: the runtime's lssusd/mdl_helpers.h WrapMode]. [0, 0]
+    /// in a default description: callers set it.
+    pub wrap: [u8; 2],
+    /// The key Remix mods name the material by (AssetKeyEXT): the albedo's D3D9 image hash,
+    /// as a D3D9 draw's material is named by its albedo.
+    pub asset_key: Option<u64>,
     /// Blended over what is behind, by this blend type (`BLEND_*`), or `None` for not.
     pub blend: Option<i32>,
     /// A layered material's tint texture (RGB multiplied over the blended layers, read at
@@ -285,8 +292,13 @@ impl Remix {
                 heightTextures: [none.as_ptr(); TERRAIN_MAX_LAYERS],
             }
         });
+        let mut key_ext = AssetKeyEXT { sType: ST_ASSET_KEY_EXT, pNext: std::ptr::null_mut(), key: m.asset_key.unwrap_or(0), aliases_values: std::ptr::null(), aliases_count: 0, assetName: std::ptr::null() };
+        let key_ptr: *mut c_void = if m.asset_key.is_some_and(|k| k != 0) { (&mut key_ext as *mut AssetKeyEXT).cast() } else { std::ptr::null_mut() };
         if let Some(l) = layered.as_mut() {
+            l.pNext = key_ptr;
             opaque.pNext = (l as *mut MaterialInfoTerrainLayersEXT).cast();
+        } else {
+            opaque.pNext = key_ptr;
         }
         let info = MaterialInfo {
             sType: ST_MATERIAL_INFO,
@@ -306,8 +318,8 @@ impl Remix {
             // WrapMode]: game textures tile; clamped, every surface whose texture
             // coordinates leave 0..1 showed its edge texel smeared (flat ground, smooth
             // rocks, streaked roads) [observed 2026-11-09].
-            wrapModeU: 1,
-            wrapModeV: 1,
+            wrapModeU: m.wrap[0],
+            wrapModeV: m.wrap[1],
         };
         let mut h = std::ptr::null_mut();
         // SAFETY: info chain and strings valid for the call.
@@ -350,6 +362,7 @@ impl Remix {
             // WrapMode]: game textures tile; clamped, every surface whose texture
             // coordinates leave 0..1 showed its edge texel smeared (flat ground, smooth
             // rocks, streaked roads) [observed 2026-11-09].
+            // Water's waves tile.
             wrapModeU: 1,
             wrapModeV: 1,
         };
@@ -375,6 +388,14 @@ impl Remix {
     /// bone indices), `bones per vertex` of each per vertex [documented: the runtime's
     /// rtx_remix_api.cpp reads `vertex * bonesPerVertex`].
     pub fn create_mesh_skinned(&self, hash: u64, vertices: &[HardcodedVertex], indices: &[u32], material: MaterialHandle, skin: Option<(u32, &[f32], &[u32])>) -> Result<MeshHandle, Error> {
+        self.create_mesh_keyed(hash, vertices, indices, material, skin, None)
+    }
+
+    /// As [`Remix::create_mesh_skinned`], with the key Remix mods name the mesh by
+    /// (`AssetKeyEXT`), when it has one.
+    pub fn create_mesh_keyed(&self, hash: u64, vertices: &[HardcodedVertex], indices: &[u32], material: MaterialHandle, skin: Option<(u32, &[f32], &[u32])>, asset_key: Option<u64>) -> Result<MeshHandle, Error> {
+        let mut key_ext = AssetKeyEXT { sType: ST_ASSET_KEY_EXT, pNext: std::ptr::null_mut(), key: asset_key.unwrap_or(0), aliases_values: std::ptr::null(), aliases_count: 0, assetName: std::ptr::null() };
+        let next: *mut c_void = if asset_key.is_some_and(|k| k != 0) { (&mut key_ext as *mut AssetKeyEXT).cast() } else { std::ptr::null_mut() };
         let skinning_value = match skin {
             Some((n, w, i)) => MeshInfoSkinning { bonesPerVertex: n, blendWeights_values: w.as_ptr(), blendWeights_count: w.len() as u32, blendIndices_values: i.as_ptr(), blendIndices_count: i.len() as u32 },
             None => MeshInfoSkinning { bonesPerVertex: 0, blendWeights_values: std::ptr::null(), blendWeights_count: 0, blendIndices_values: std::ptr::null(), blendIndices_count: 0 },
@@ -388,7 +409,7 @@ impl Remix {
             skinning_value,
             material,
         };
-        let info = MeshInfo { sType: ST_MESH_INFO, pNext: std::ptr::null_mut(), hash, surfaces_values: &surface, surfaces_count: 1 };
+        let info = MeshInfo { sType: ST_MESH_INFO, pNext: next, hash, surfaces_values: &surface, surfaces_count: 1 };
         let mut h = std::ptr::null_mut();
         // SAFETY: checked present in load; arrays valid for the call (the runtime copies).
         check("CreateMesh", unsafe { (self.api.CreateMesh.unwrap_unchecked())(&info, &mut h) })?;

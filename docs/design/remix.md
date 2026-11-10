@@ -136,6 +136,35 @@ Effects, third pass (2026-11-09):
   place when the eye has moved 32 units; about 190 shapes in Goodsprings. The original
   fades them in its vertex shader, which Remix captures on the D3D9 route.
 
+Reference rules and identities, fourth pass (2026-11-10):
+
+- Game fog cards left out: unlit, alpha-over, UV-animated (`NifSurface::uv_animated`, from
+  the model's texture-transform controllers), not a particle system [documented: the
+  wrapper's plugin fog.cpp]. Light cards only on non-skinned shapes. Remaining unlit
+  alpha-over cards carry PARTICLE and IGNORE_OPACITY_MICROMAP (api_unlit.cpp).
+- Texture lists resolved over rtx.conf then user.conf: each list its positives minus its
+  own negatives; categories and the alpha drop from the final membership.
+- `rtx.fnvProtocol.apiGlowTint` on (the emissive colour tints a glow map only with it);
+  `rtx.scene.assetKeys` on.
+- Addressing per material: the albedo's sampler U and V (texture.rs loads a clamped copy
+  for a clamping shape) as Remix wrap modes; land and water repeat.
+- Late and changed textures: a material made without a texture is made again when it
+  arrives; a changed image replaces its Remix texture in place; only the adapter's own
+  shrink event is skipped.
+- Terrain layers composited in rank order (the layer material's depth bias).
+- Interior fill light off by default (`NVF_REMIX_FILL_SCALE` turns it on).
+- Replacement identities: meshes carry AssetKeyEXT with the wrapper's geometry key
+  (positions used, indices in stored order, descriptor; scoped by the diffuse when a mod's
+  shared_mesh_keys.txt names it); materials carry the albedo's D3D9 hash.
+- Remix mods from the game folder's rtx-remix\mods (MO2's merged view: the HND install has
+  three, RTX-FNV, RTX-FNV-MAIN, RTXFNV, which the original loads too), opt-in
+  (`[Render] RemixMods=1`, NVF_REMIX_MODS=1): with them the card ran out of memory
+  [observed 2026-11-10].
+- Memory: NVForever with the HND load order reaches about 15 GB of private memory in the
+  first 25 s at Goodsprings with or without Remix [observed 2026-11-10, NVF_REMIX_MEMLOG
+  and process samples]; with about 12 GB of commit free (other programs 25 GB) it stops
+  on a failed allocation.
+
 Memory and frame cost, same pass [observed, Goodsprings, 1280x720, High preset]:
 
 - A world texture's pixels go to Remix and Bevy keeps one 4x4 level of it

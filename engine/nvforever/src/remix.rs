@@ -31,6 +31,9 @@ use std::sync::Arc;
 #[derive(Resource, Clone)]
 pub struct RemixConfig {
     pub dll: PathBuf,
+    /// The game folder (the data folder's parent): under MO2 the merged view, where the
+    /// installed Remix mods appear (`rtx-remix\mods`).
+    pub game_dir: Option<PathBuf>,
 }
 
 pub struct RemixPlugin(pub RemixConfig);
@@ -73,6 +76,9 @@ struct CpuMeshes {
     /// World textures whose pixels went to Remix and whose Bevy image was cut down to one
     /// 4x4 level (`take_new_images`).
     shrunk: HashSet<AssetId<Image>>,
+    /// Images this adapter just cut down (one Modified event of its own each, skipped);
+    /// a later change of the image is a real one and goes to Remix again.
+    own_change: HashSet<AssetId<Image>>,
 }
 
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
@@ -80,6 +86,62 @@ struct CpuMesh {
     verts: Vec<HardcodedVertex>,
     idx: Vec<u32>,
     skin: Option<(Vec<f32>, Vec<u32>)>,
+    /// The key the original's draw of this geometry has for Remix mods (`geometry_key`).
+    asset_key: u64,
+}
+
+/// The mesh key New Vegas RTX gives a static geometry, from its positions in its own space
+/// and its triangles in their stored order: XXH3 over the positions the triangles use
+/// (lowest index first, each seeded with the hash so far), XXH3 of the indices, the
+/// runtime's descriptor hash (index and vertex counts, triangle list, 32-bit indices),
+/// chained with XXH64 [documented: the wrapper's api_asset_keys.cpp of() and
+/// descriptor_hash; the runtime's rtx_hashing.cpp].
+fn geometry_key(positions: &[[f32; 3]], indices: &[u32]) -> u64 {
+    use twox_hash::{XxHash3_64, XxHash64};
+    if positions.is_empty() || indices.is_empty() {
+        return 0;
+    }
+    let mut used = vec![false; positions.len()];
+    for &i in indices {
+        if let Some(u) = used.get_mut(i as usize) {
+            *u = true;
+        }
+    }
+    let mut pos = 0u64;
+    for (v, p) in positions.iter().enumerate() {
+        if used[v] {
+            let b: Vec<u8> = p.iter().flat_map(|f| f.to_le_bytes()).collect();
+            pos = XxHash3_64::oneshot_with_seed(pos, &b);
+        }
+    }
+    let ib: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+    let idx = XxHash3_64::oneshot(&ib);
+    let mut desc = XxHash3_64::oneshot_with_seed(0, &(indices.len() as u32).to_le_bytes());
+    desc = XxHash3_64::oneshot_with_seed(desc, &(positions.len() as u32).to_le_bytes());
+    desc = XxHash3_64::oneshot_with_seed(desc, &3u32.to_le_bytes());
+    desc = XxHash3_64::oneshot_with_seed(desc, &1u32.to_le_bytes());
+    let key = XxHash64::oneshot(pos, &idx.to_le_bytes());
+    let key = XxHash64::oneshot(key, &desc.to_le_bytes());
+    key.max(1)
+}
+
+/// A geometry's name scoped by its diffuse (shared_mesh_keys.txt names meshes so)
+/// [documented: the wrapper's shared_mesh_keys.hpp scoped_name].
+fn scoped_name(key: u64, diffuse: u64) -> u64 {
+    twox_hash::XxHash64::oneshot(key, &diffuse.to_le_bytes()).max(1)
+}
+
+/// The names a Remix mod's shared_mesh_keys.txt gives geometry by diffuse: lines of
+/// `<key hex16> <diffuse hex16>` [documented: the wrapper's shared_mesh_keys.hpp
+/// parse_scoped_line; api_asset_keys.cpp load_table].
+fn shared_mesh_names(mods: &std::path::Path) -> HashSet<u64> {
+    let Ok(text) = std::fs::read_to_string(mods.join("ConvertedMods").join("shared_mesh_keys.txt")) else { return HashSet::new() };
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim_end_matches('\r');
+            (l.len() == 33 && l.as_bytes()[16] == b' ').then(|| Some(scoped_name(u64::from_str_radix(&l[..16], 16).ok()?, u64::from_str_radix(&l[17..], 16).ok()?))).flatten()
+        })
+        .collect()
 }
 
 struct PendingImage {
@@ -93,6 +155,29 @@ struct PendingImage {
     /// level as stored), for block-compressed textures [documented: New Vegas RTX's
     /// api_rtxconf.cpp d3d9_image_hash, the top level packed without pitch padding].
     d3d9: Option<u64>,
+    /// Its sampler's addressing, U and V, in Remix's terms (`remix_wrap`).
+    wrap: [u8; 2],
+    /// New pixels of an image Remix may have already: replaced in place.
+    modified: bool,
+}
+
+/// An image's addressing as Remix's wrap modes (0 clamp, 1 repeat, 2 mirrored, 3 clip): the
+/// sampler NVForever gave it, which carries the NIF's clamp mode (texture.rs loads a
+/// clamped copy for a clamping shape), else the app's default, repeat (main.rs ImagePlugin)
+/// [documented: the runtime's mdl_helpers.h WrapMode; the wrapper's api_material.cpp passes
+/// each axis].
+fn remix_wrap(sampler: &bevy::image::ImageSampler) -> [u8; 2] {
+    use bevy::image::{ImageAddressMode as A, ImageSampler};
+    let one = |m: A| match m {
+        A::ClampToEdge => 0,
+        A::Repeat => 1,
+        A::MirrorRepeat => 2,
+        A::ClampToBorder => 3,
+    };
+    match sampler {
+        ImageSampler::Descriptor(d) => [one(d.address_mode_u), one(d.address_mode_v)],
+        ImageSampler::Default => [1, 1],
+    }
 }
 
 /// XXH3-64 of a block-compressed texture's top level (the bytes at the start of a DDS's
@@ -118,7 +203,12 @@ struct RtxLists {
 }
 
 impl RtxLists {
-    fn read(text: &str) -> RtxLists {
+    /// The lists as the runtime resolves its layers: each file in order (rtx.conf, then
+    /// user.conf) adds its positive entries to a list and takes its negative ("-0x…")
+    /// entries out of that list only; a texture's categories and alpha drop come from the
+    /// lists it ends up in [documented: the wrapper's api_rtxconf.cpp, "each list on its
+    /// own: its positive entries minus its own negative entries"].
+    fn read(texts: &[String]) -> RtxLists {
         // The lists that tag an API draw, and the category each becomes; the runtime's
         // D3D9-only lists (uiTextures, lightConverter, …) are left out.
         const LISTS: [(&str, u32, bool); 23] = [
@@ -147,30 +237,38 @@ impl RtxLists {
             ("rtx.ignoreAlphaOnTextures", 1 << 21, true),
         ];
         let mut out = RtxLists { glow_intensity: 1.0, ..Default::default() };
-        for line in text.lines() {
-            let Some((k, v)) = line.split_once('=') else { continue };
-            let k = k.trim();
-            if k == "rtx.fnvProtocol.glowEmissiveIntensity" {
-                out.glow_intensity = v.trim().parse().unwrap_or(1.0);
-                continue;
-            }
-            let Some(&(_, cat, drop)) = LISTS.iter().find(|l| l.0 == k) else { continue };
-            for item in v.split(',') {
-                let item = item.trim();
-                // A negative entry ("-0x…") takes the hash out of this list.
-                let (neg, hex) = match item.strip_prefix('-') {
-                    Some(r) => (true, r),
-                    None => (false, item),
-                };
-                let Some(hex) = hex.strip_prefix("0x").or_else(|| hex.strip_prefix("0X")) else { continue };
-                let Ok(h) = u64::from_str_radix(hex, 16) else { continue };
-                let e = out.by_hash.entry(h).or_default();
-                if neg {
-                    e.0 &= !cat;
-                } else {
-                    e.0 |= cat;
-                    e.1 |= drop;
+        let mut sets: Vec<HashSet<u64>> = vec![HashSet::new(); LISTS.len()];
+        for text in texts {
+            for line in text.lines() {
+                let Some((k, v)) = line.split_once('=') else { continue };
+                let k = k.trim();
+                if k == "rtx.fnvProtocol.glowEmissiveIntensity" {
+                    out.glow_intensity = v.trim().parse().unwrap_or(out.glow_intensity);
+                    continue;
                 }
+                let Some(n) = LISTS.iter().position(|l| l.0 == k) else { continue };
+                for item in v.split(',') {
+                    let item = item.trim();
+                    let (neg, hex) = match item.strip_prefix('-') {
+                        Some(r) => (true, r),
+                        None => (false, item),
+                    };
+                    let Some(hex) = hex.strip_prefix("0x").or_else(|| hex.strip_prefix("0X")) else { continue };
+                    let Ok(h) = u64::from_str_radix(hex, 16) else { continue };
+                    if neg {
+                        sets[n].remove(&h);
+                    } else {
+                        sets[n].insert(h);
+                    }
+                }
+            }
+        }
+        for (n, set) in sets.iter().enumerate() {
+            let (_, cat, drop) = LISTS[n];
+            for h in set {
+                let e = out.by_hash.entry(*h).or_default();
+                e.0 |= cat;
+                e.1 |= drop;
             }
         }
         out
@@ -198,6 +296,12 @@ struct RemixState {
     started: std::time::Instant,
     why: [u32; 6],
     shot_taken: bool,
+    /// shared_mesh_keys.txt's names of geometry by diffuse.
+    mesh_names: HashSet<u64>,
+    /// Materials made without a texture, by that texture's hash.
+    mat_missing: HashMap<u64, Vec<UntypedAssetId>>,
+    /// Each uploaded texture's addressing (Remix wrap modes, U and V).
+    wrap: HashMap<u64, [u8; 2]>,
     /// Where the eye was when each falloff shape's vertices were last faded.
     falloff_eye: HashMap<(AssetId<Mesh>, UntypedAssetId), Vec3>,
     /// Raw input is shared with the runtime's menu window.
@@ -287,6 +391,7 @@ fn convert_mesh(m: &Mesh) -> Option<CpuMesh> {
         Some(Indices::U32(i)) => i.clone(),
         None => (0..verts.len() as u32).collect(),
     };
+    let asset_key = geometry_key(pos, &idx);
     // Bevy's front faces wind counter-clockwise, Remix's the other way (Direct3D's)
     // [observed: single-sided interior walls traced only from outside until flipped].
     for t in idx.as_chunks_mut::<3>().0 {
@@ -307,7 +412,7 @@ fn convert_mesh(m: &Mesh) -> Option<CpuMesh> {
         (Some(w), Some(j)) if w.len() == verts.len() * 4 && j.len() == verts.len() * 4 => Some((w, j)),
         _ => None,
     };
-    Some(CpuMesh { verts, idx, skin })
+    Some(CpuMesh { verts, idx, skin, asset_key })
 }
 
 /// NIF materials NVForever changed: their Remix materials are made again (window glows
@@ -365,12 +470,15 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, mut images: ResMut<
     for e in ev.read() {
         if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = e {
             cpu.shrunk.remove(id);
+            cpu.own_change.remove(id);
         }
         let (AssetEvent::Added { id } | AssetEvent::Modified { id }) = e else { continue };
-        // The change is this system's own (the image cut down below).
-        if cpu.shrunk.contains(id) {
+        // The change is this system's own (the image cut down below); any later one is
+        // new pixels.
+        if cpu.own_change.remove(id) {
             continue;
         }
+        let modified = matches!(e, AssetEvent::Modified { .. });
         if ui.as_ref().is_some_and(|u| u.image == *id) {
             continue;
         }
@@ -419,6 +527,7 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, mut images: ResMut<
         };
         if taken.is_some() {
             cpu.shrunk.insert(*id);
+            cpu.own_change.insert(*id);
         }
         let Some(img) = images.get(*id) else { continue };
         let d = &img.texture_descriptor;
@@ -439,7 +548,8 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, mut images: ResMut<
         // shaded flat].
         let normal = !format.is_srgb() && name.as_deref().is_none_or(|n| n.ends_with("_n.dds") || n.ends_with("_n.png"));
         let d3d9 = d3d9_hash(format, width, height, &data);
-        cpu.pending_images.push((*id, Arc::new(PendingImage { width, height, mips, format, data, normal, d3d9 })));
+        let wrap = remix_wrap(&img.sampler);
+        cpu.pending_images.push((*id, Arc::new(PendingImage { width, height, mips, format, data, normal, d3d9, wrap, modified })));
     }
 }
 
@@ -518,6 +628,8 @@ struct ShapeIn<'a> {
 struct NifExtra {
     /// Left out of the traced scene, as New Vegas RTX leaves it out (`NifSurface::light_card`).
     light_card: bool,
+    /// Its base texture is UV-animated (`NifSurface::uv_animated`).
+    uv_animated: bool,
     /// A refracting shell: it only bends the picture behind it (NifSurface::refract).
     refract: bool,
     /// The alpha test of a blended shape (NifSurface::alpha_cut, 0..1; 0 none).
@@ -542,7 +654,7 @@ impl<'w, 's> Shapes<'w, 's> {
         }
         let mut out = Vec::new();
         take(&self.nif, &self.nif_m, &mut out, |e| {
-            let extra = NifExtra { light_card: e.light_card, refract: e.refract, alpha_cut: e.alpha_cut, falloff: (e.falloff != nvf_assets::nif_material::Falloff::NONE.params).then_some(e.falloff) };
+            let extra = NifExtra { light_card: e.light_card, uv_animated: e.uv_animated, refract: e.refract, alpha_cut: e.alpha_cut, falloff: (e.falloff != nvf_assets::nif_material::Falloff::NONE.params).then_some(e.falloff) };
             (e.decal, e.add_whole > 0.5, extra)
         });
         take(&self.leaf, &self.leaf_m, &mut out, |_| (false, false, NifExtra::default()));
@@ -661,12 +773,20 @@ fn frame(
         st.queued.insert(hash_of(&id));
         st.upload_queue.push_back((id, img));
     }
+    // What NVForever holds for Remix, once a second for the first two minutes
+    // (NVF_REMIX_MEMLOG): CPU mesh copies and textures waiting to go.
+    if std::env::var_os("NVF_REMIX_MEMLOG").is_some() && st.frames % 5 == 0 && st.frames < 7200 {
+        let mesh_bytes: usize = cpu.by_id.values().map(|m| m.verts.len() * std::mem::size_of::<HardcodedVertex>() + m.idx.len() * 4 + m.skin.as_ref().map_or(0, |(w, j)| w.len() * 4 + j.len() * 4)).sum();
+        let queued: usize = st.upload_queue.iter().map(|(_, i)| i.data.len()).sum();
+        info!("remix mem: frame {}: {} CPU meshes {:.0} MB, {} textures queued {:.0} MB, {} uploaded, {} Remix meshes", st.frames, cpu.by_id.len(), mesh_bytes as f64 / 1e6, st.upload_queue.len(), queued as f64 / 1e6, st.textures.len(), st.meshes.len());
+    }
     let mut uploaded = 0usize;
     while uploaded < UPLOAD_BYTES_A_FRAME {
         let Some((id, img)) = st.upload_queue.pop_front() else { break };
         let hash = hash_of(&id);
         st.queued.remove(&hash);
-        if st.textures.contains(&hash) {
+        let replace = st.textures.contains(&hash);
+        if replace && !img.modified {
             continue;
         }
         uploaded += img.data.len();
@@ -678,13 +798,20 @@ fn frame(
         // tangent-space layers, as New Vegas RTX makes them [documented: the wrapper's
         // api_material.cpp, normalsRgbTangentSpace and the per-layer gloss].
         let _ = img.normal;
-        let t = nvf_remix::TextureData { hash, width: img.width, height: img.height, mips: img.mips, format, data: &img.data, vk_format: vk, encoding: ffi::ENCODING_NONE, replace: false };
+        let t = nvf_remix::TextureData { hash, width: img.width, height: img.height, mips: img.mips, format, data: &img.data, vk_format: vk, encoding: ffi::ENCODING_NONE, replace };
+        st.wrap.insert(hash, img.wrap);
         if let Some(h) = img.d3d9 {
             st.d3d9.insert(hash, h);
         }
         match st.remix.create_texture(&t) {
             Ok(_) => {
                 st.textures.insert(hash);
+                st.failed_textures.remove(&hash);
+                // Materials made without this texture (it came after they gave up on it)
+                // are made again with it.
+                if let Some(mats) = st.mat_missing.remove(&hash) {
+                    cpu.changed_materials.extend(mats);
+                }
             }
             Err(e) => {
                 st.errors += 1;
@@ -774,7 +901,11 @@ fn frame(
         // As New Vegas RTX: light cards are not in the traced scene; refracting shells only
         // bend what is behind them, which a path tracer has no use for [documented: the
         // wrapper's scene_statics.cpp light_card_shape; design for refraction].
-        if nif.light_card || nif.refract {
+        // The game's fog, mist and haze cards: unlit, alpha-over, UV-animated, not a
+        // particle system (NVForever's particles are not model shapes) [documented: the
+        // wrapper's plugin fog.cpp].
+        let fog_card = nif.uv_animated && base.unlit && matches!(base.alpha_mode, AlphaMode::Blend);
+        if nif.light_card || nif.refract || fog_card {
             why[4] += 1;
             continue;
         }
@@ -879,7 +1010,13 @@ fn frame(
                     &moved
                 };
                 let mesh_hash = hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0), st.mat_gen.get(&mat).copied().unwrap_or(0)));
-                match st.remix.create_mesh_skinned(mesh_hash, verts, &data.idx, rm, skin) {
+                // The key mods name the mesh by (static meshes, as the wrapper keys them).
+                let asset_key = (skin.is_none() && data.asset_key != 0).then(|| {
+                    let diffuse = base.base_color_texture.as_ref().and_then(|h| st.d3d9.get(&hash_of(&h.id()))).copied().unwrap_or(0);
+                    let named = scoped_name(data.asset_key, diffuse);
+                    if diffuse != 0 && st.mesh_names.contains(&named) { named } else { data.asset_key }
+                });
+                match st.remix.create_mesh_keyed(mesh_hash, verts, &data.idx, rm, skin, asset_key) {
                     Ok(h) => {
                         st.meshes.insert(key, h);
                         // Refreshed in place later only as sent: not with a baked UV transform.
@@ -907,7 +1044,7 @@ fn frame(
         // Smoke, dust and steam: unlit alpha-over cards that are not decals carry PARTICLE,
         // so they stay translucent at every preset [documented: the wrapper's api_unlit.cpp,
         // "cards", material::translucent_card].
-        let category = if base.unlit && matches!(base.alpha_mode, AlphaMode::Blend) && !decal { category | (1 << 9) } else { category };
+        let category = if base.unlit && matches!(base.alpha_mode, AlphaMode::Blend) && !decal { category | (1 << 9) | (1 << 7) } else { category };
         let two_sided = base.double_sided || base.cull_mode.is_none();
         // A skinned mesh: posed by its joints (joint × inverse bind pose, world space, as
         // Bevy skins it) taken into the instance's space, the instance where its entity is
@@ -1030,7 +1167,7 @@ fn frame(
     // path tracer has no counterpart for inside closed walls [design: the easy stand-in;
     // NVF_REMIX_FILL_SCALE, observed 2026-11-09: rooms near black without it].
     if let (Some(sky), Some(eye)) = (lights.sky.as_deref(), eye) {
-        if sky.interior.is_some() {
+        if sky.interior.is_some() && st.fill_scale > 0.0 {
             let c = lights.ambient.color.to_linear();
             let r = 16.0f32;
             let k = lights.ambient.brightness / crate::sky::light_unit() * st.fill_scale / (r * r);
@@ -1146,6 +1283,14 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         // Still in the upload queue: it will come.
         return None;
     }
+    // Textures it is made without (given up on, or still queued): when one arrives the
+    // material is made again (`mat_missing`).
+    for h in [&b.base_color_texture, &b.normal_map_texture, &b.emissive_texture].into_iter().flatten() {
+        let x = hash_of(&h.id());
+        if !st.textures.contains(&x) {
+            st.mat_missing.entry(x).or_default().push(id);
+        }
+    }
     let tex = |h: &Option<Handle<Image>>| h.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
     let c = b.base_color.to_linear();
     let e = b.emissive;
@@ -1165,6 +1310,8 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
     let glow = st.lists.glow_intensity;
     let desc = nvf_remix::MaterialDesc {
         hash: hash_of(&(id, st.mat_gen.get(&id).copied().unwrap_or(0))),
+        wrap: tex(&b.base_color_texture).and_then(|h| st.wrap.get(&h).copied()).unwrap_or([1, 1]),
+        asset_key: tex(&b.base_color_texture).and_then(|h| st.d3d9.get(&h).copied()),
         albedo: tex(&b.base_color_texture),
         // LOD terrain's normal maps are in model space (lod.rs), not the tangent space
         // Remix reads: left out.
@@ -1498,9 +1645,26 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
                     }
                 }
             }
-            let mods = r.join("rtx-remix").join("mods");
-            if mods.is_dir() {
+            // Remix mods: the game folder's rtx-remix\mods first (under MO2 the merged view,
+            // where every installed mod's Root shows), else the runtime's install. Found
+            // here, not from the DLL's folder alone, which is one MO2 mod.
+            let mods = config.game_dir.as_ref().map(|g| g.join("rtx-remix").join("mods")).filter(|m| m.is_dir()).unwrap_or_else(|| r.join("rtx-remix").join("mods"));
+            // Off unless asked for (NVForever.ini `[Render] RemixMods=1`, NVF_REMIX_MODS=1):
+            // with the HND install's three packs the card ran out of memory in 15 s, Bevy's
+            // own meshes still held under the Remix window [observed 2026-11-09: wgpu "Out of
+            // Memory" growing a mesh slab; the original with the same packs at 9.8 GB].
+            let want_mods = std::env::var("NVF_REMIX_MODS").map(|v| v == "1").unwrap_or_else(|_| {
+                fnv_install::EngineHome::user().and_then(|h| std::fs::read_to_string(h.config_file()).ok()).and_then(|t| fnv_install::ini_get(&t, "Render", "RemixMods").map(|v| v.trim() == "1")).unwrap_or(false)
+            });
+            if !want_mods {
+                // An empty folder: the runtime's own default would find the install's packs.
+                let none = work.join("no-mods");
+                let _ = std::fs::create_dir_all(&none);
+                std::env::set_var("DEFAULT_MODS_DIR", &none);
+                info!("remix: Remix mods off ([Render] RemixMods=1 turns them on: {} there)", mods.display());
+            } else if mods.is_dir() {
                 std::env::set_var("DEFAULT_MODS_DIR", &mods);
+                info!("remix: Remix mods from {}", mods.display());
             }
         }
         std::env::set_var("DXVK_LOG_PATH", work.join("logs"));
@@ -1508,20 +1672,20 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         std::env::set_var("DXVK_CONFIG_FILE", work.join("dxvk.conf"));
         let _ = std::env::set_current_dir(work);
     }
-    let lists = home
-        .as_ref()
-        .map(|w| w.join("rtx.conf"))
-        .or_else(|| root.as_ref().map(|r| r.join("rtx.conf")))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| RtxLists::read(&t))
-        .unwrap_or(RtxLists { glow_intensity: 1.0, ..Default::default() });
+    let folder = home.clone().or_else(|| root.clone());
+    let texts: Vec<String> = ["rtx.conf", "user.conf"].iter().filter_map(|f| folder.as_ref().and_then(|d| std::fs::read_to_string(d.join(f)).ok())).collect();
+    let lists = RtxLists::read(&texts);
+    let mesh_names = std::env::var_os("DEFAULT_MODS_DIR").map(|m| shared_mesh_names(std::path::Path::new(&m))).unwrap_or_default();
     info!("remix: rtx.conf lists name {} textures; glow intensity {}", lists.by_hash.len(), lists.glow_intensity);
     let child = nvf_remix::window::Child::new(parent).ok_or("could not make the Remix child window")?;
     let mut remix = nvf_remix::Remix::load(&config.dll)?;
     remix.startup(child.hwnd.cast()).map_err(|e| e.to_string())?;
     // Bevy's space: Y up, right-handed [design: NVForever's scene].
     // The sky's own day cycle off: NVForever's clock places its sun (frame).
-    for (k, v) in [("rtx.zUp", "False"), ("rtx.leftHandedCoordinateSystem", "False"), ("rtx.atmosphere.timeCycleEnable", "False")] {
+    // The emissive colour tints a glow map only with rtx.fnvProtocol.apiGlowTint, which the
+    // wrapper turns on [documented: the runtime's rtx_remix_api.cpp; the wrapper's
+    // api_material.cpp push of apiGlowTint].
+    for (k, v) in [("rtx.zUp", "False"), ("rtx.leftHandedCoordinateSystem", "False"), ("rtx.atmosphere.timeCycleEnable", "False"), ("rtx.fnvProtocol.apiGlowTint", "True"), ("rtx.scene.assetKeys", "True")] {
         if let Err(e) = remix.set_config(k, v) {
             warn!("remix: {k}: {e}");
         }
@@ -1546,6 +1710,9 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         started: std::time::Instant::now(),
         why: [0; 6],
         shot_taken: false,
+        mesh_names,
+        mat_missing: HashMap::new(),
+        wrap: HashMap::new(),
         falloff_eye: HashMap::new(),
         input_shared: false,
         light_a2: scale("NVF_REMIX_LIGHT_A2", 0.001),
@@ -1558,7 +1725,9 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         remade: 0,
         refreshed: 0,
         mesh_shape: HashMap::new(),
-        fill_scale: scale("NVF_REMIX_FILL_SCALE", 20000.0),
+        // Off unless asked for: a light following the eye is no part of the original's
+        // lighting (NVF_REMIX_FILL_SCALE, e.g. 20000, turns it on as an artistic fill).
+        fill_scale: scale("NVF_REMIX_FILL_SCALE", 0.0),
         member_radius: scale("NVF_REMIX_MEMBER_RADIUS", 8192.0),
         upload_queue: Default::default(),
         queued: HashSet::new(),
@@ -1815,6 +1984,11 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
                 .filter_map(|l| cpu.by_id.get(&l.mesh).map(|d| (l, d.as_ref())))
                 .filter(|(_, d)| d.verts.len() == base.verts.len() && d.verts[0].position == first)
                 .collect();
+            // In the layers' rank, as the terrain loader composites them (its layer
+            // material's depth bias is sort_first(2 x (rank + 1)), terrain.rs), not in query
+            // order.
+            let mut layers = layers;
+            layers.sort_by(|a, b| a.0.base.depth_bias.total_cmp(&b.0.base.depth_bias));
             if layers.is_empty() {
                 continue;
             }
@@ -1905,6 +2079,8 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
                 roughness: 0.85,
                 metallic: 0.0,
                 tint: tinted.then_some(tint_hash),
+                // Land textures tile.
+                wrap: [1, 1],
                 ..Default::default()
             };
             let white: Vec<HardcodedVertex> = base.verts.iter().map(|v| HardcodedVertex { color: 0xFFFF_FFFF, ..*v }).collect();
