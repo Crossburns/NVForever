@@ -110,9 +110,31 @@ struct CpuMeshes {
     own_mesh_change: HashSet<AssetId<Mesh>>,
 }
 
+/// A vertex as kept between frames: Remix's vertex without its 28 bytes of padding, widened
+/// only when it goes to the runtime [observed 2026-11-10: 3688 meshes held 1372 MB at 64
+/// bytes a vertex in Goodsprings].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CpuVertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    texcoord: [f32; 2],
+    color: u32,
+}
+
+impl CpuVertex {
+    fn hw(&self) -> HardcodedVertex {
+        HardcodedVertex { position: self.position, normal: self.normal, texcoord: self.texcoord, color: self.color, ..Default::default() }
+    }
+}
+
+/// The runtime's vertices of `v`.
+fn wide(v: &[CpuVertex]) -> Vec<HardcodedVertex> {
+    v.iter().map(CpuVertex::hw).collect()
+}
+
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
 struct CpuMesh {
-    verts: Vec<HardcodedVertex>,
+    verts: Vec<CpuVertex>,
     idx: Vec<u32>,
     skin: Option<(Vec<f32>, Vec<u32>)>,
     /// The key the original's draw of this geometry has for Remix mods (`geometry_key`).
@@ -386,6 +408,23 @@ struct RemixState {
     /// Retained instances made or described again, and moved, since the last stats line.
     ret_made: u64,
     ret_moved: u64,
+    /// Uploaded texture contents (format, size, levels, pixels) by their first hash, and the
+    /// bytes uploaded again for an image of the same contents (a clamped copy, a second
+    /// handle of one file).
+    contents: HashMap<u64, u64>,
+    same_bytes: u64,
+    same_count: u64,
+    /// Textures not uploaded because one of the same contents was: their materials name
+    /// that one (`remix_tex`), each with its own addressing and D3D9 hash, which stay
+    /// under the image's own hash [observed 2026-11-10: 103 textures, 366 MB, in
+    /// Goodsprings: clamped copies and second handles of one file].
+    alias: HashMap<u64, u64>,
+}
+
+/// The texture Remix has for the image of hash `h`: its own, or the one of the same
+/// contents uploaded first.
+fn remix_tex(st: &RemixState, h: u64) -> u64 {
+    st.alias.get(&h).copied().unwrap_or(h)
 }
 
 /// One retained instance: what it was last described and placed as.
@@ -524,14 +563,13 @@ fn convert_mesh(m: &Mesh) -> Option<CpuMesh> {
     };
     let to8 = |x: f32| (x.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
     let verts = (0..pos.len())
-        .map(|i| HardcodedVertex {
+        .map(|i| CpuVertex {
             position: pos[i],
             normal: normals.and_then(|n| n.get(i)).copied().unwrap_or([0.0, 1.0, 0.0]),
             texcoord: uvs.and_then(|u| u.get(i)).copied().unwrap_or([0.0, 0.0]),
             // D3DCOLOR order: A R G B from the top byte [documented: remix_c.h's
             // HardcodedVertex.color, a D3D9 vertex colour].
             color: colors.and_then(|c| c.get(i)).map_or(0xFFFF_FFFF, |c| to8(c[3]) << 24 | to8(c[0]) << 16 | to8(c[1]) << 8 | to8(c[2])),
-            _pad: [0; 7],
         })
         .collect::<Vec<_>>();
     let mut idx: Vec<u32> = match m.try_indices_option().ok()? {
@@ -912,7 +950,7 @@ fn frame(
         let mut remake: HashSet<AssetId<Mesh>> = HashSet::new();
         for k in stale {
             let refreshed = match (cpu.by_id.get(&k.0), st.meshes.get(&k), st.materials.get(&k.1), st.mesh_shape.get(&k)) {
-                (Some(d), Some(h), Some(m), Some(&(nv, ni, hash))) if d.skin.is_none() && d.verts.len() == nv && d.idx.len() == ni && !remake.contains(&k.0) => st.remix.refresh_mesh(hash, *h, &d.verts, &d.idx, *m),
+                (Some(d), Some(h), Some(m), Some(&(nv, ni, hash))) if d.skin.is_none() && d.verts.len() == nv && d.idx.len() == ni && !remake.contains(&k.0) => st.remix.refresh_mesh(hash, *h, &wide(&d.verts), &d.idx, *m),
                 _ => false,
             };
             if refreshed {
@@ -963,7 +1001,7 @@ fn frame(
     // What NVForever holds for Remix, once a second for the first two minutes
     // (NVF_REMIX_MEMLOG): CPU mesh copies and textures waiting to go.
     if std::env::var_os("NVF_REMIX_MEMLOG").is_some() && st.frames % 5 == 0 && st.frames < 7200 {
-        let mesh_bytes: usize = cpu.by_id.values().map(|m| m.verts.len() * std::mem::size_of::<HardcodedVertex>() + m.idx.len() * 4 + m.skin.as_ref().map_or(0, |(w, j)| w.len() * 4 + j.len() * 4)).sum();
+        let mesh_bytes: usize = cpu.by_id.values().map(|m| m.verts.len() * std::mem::size_of::<CpuVertex>() + m.idx.len() * 4 + m.skin.as_ref().map_or(0, |(w, j)| w.len() * 4 + j.len() * 4)).sum();
         let queued: usize = st.upload_queue.iter().map(|(_, i)| i.data.len()).sum();
         info!("remix mem: frame {}: {} CPU meshes {:.0} MB, {} textures queued {:.0} MB, {} uploaded, {} Remix meshes", st.frames, cpu.by_id.len(), mesh_bytes as f64 / 1e6, st.upload_queue.len(), queued as f64 / 1e6, st.textures.len(), st.meshes.len());
     }
@@ -972,9 +1010,13 @@ fn frame(
         let Some((id, img)) = st.upload_queue.pop_front() else { break };
         let hash = hash_of(&id);
         st.queued.remove(&hash);
-        let replace = st.textures.contains(&hash);
+        let mut replace = st.textures.contains(&hash);
         if replace && !img.modified {
             continue;
+        }
+        // New pixels of an image that shared another's texture: its own texture now.
+        if replace && st.alias.remove(&hash).is_some() {
+            replace = false;
         }
         uploaded += img.data.len();
         let Some((format, vk)) = remix_format(img.format) else {
@@ -989,6 +1031,21 @@ fn frame(
         st.wrap.insert(hash, img.wrap);
         if let Some(h) = img.d3d9 {
             st.d3d9.insert(hash, h);
+        }
+        if !replace && !img.modified {
+            let content = twox_hash::XxHash3_64::oneshot_with_seed(u64::from(img.width) << 32 | u64::from(img.height) | u64::from(img.mips) << 56, &img.data) ^ format as u64;
+            let first = *st.contents.entry(content).or_insert(hash);
+            if first != hash && st.textures.contains(&first) && !st.alias.contains_key(&first) {
+                st.same_bytes += img.data.len() as u64;
+                st.same_count += 1;
+                st.alias.insert(hash, first);
+                st.textures.insert(hash);
+                st.failed_textures.remove(&hash);
+                if let Some(mats) = st.mat_missing.remove(&hash) {
+                    cpu.changed_materials.extend(mats);
+                }
+                continue;
+            }
         }
         match st.remix.create_texture(&t) {
             Ok(_) => {
@@ -1190,13 +1247,12 @@ fn frame(
                 // The material's UV transform, baked in: Remix's materials have none (the
                 // Pip-Boy's screen shows a part of its canvas through one).
                 let t = base.uv_transform;
-                let moved: Vec<HardcodedVertex>;
-                let verts: &[HardcodedVertex] = if t == bevy::math::Affine2::IDENTITY {
-                    &data.verts
+                let verts: Vec<HardcodedVertex> = if t == bevy::math::Affine2::IDENTITY {
+                    wide(&data.verts)
                 } else {
-                    moved = data.verts.iter().map(|v| HardcodedVertex { texcoord: t.transform_point2(Vec2::from(v.texcoord)).to_array(), ..*v }).collect();
-                    &moved
+                    data.verts.iter().map(|v| HardcodedVertex { texcoord: t.transform_point2(Vec2::from(v.texcoord)).to_array(), ..v.hw() }).collect()
                 };
+                let verts = verts.as_slice();
                 let mesh_hash = hash_of(&(key, st.mesh_gen.get(&mesh).copied().unwrap_or(0), st.mat_gen.get(&mat).copied().unwrap_or(0)));
                 // The key mods name the mesh by (static meshes, as the wrapper keys them).
                 let asset_key = (skin.is_none() && data.asset_key != 0).then(|| {
@@ -1292,7 +1348,7 @@ fn frame(
                         // The water's noise (its normal map) gives the surface its waves; Remix
                         // moves it on animated water [documented: rtx_options.h
                         // animatedWaterTextures, instance category ANIMATED_WATER].
-                        let waves = w.noise.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
+                        let waves = w.noise.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x)).map(|x| remix_tex(st, x));
                         match st.remix.create_translucent_material(hash_of(&key.1), colour, distance, 1.33, waves) {
                             Ok(h) => {
                                 st.materials.insert(key.1, h);
@@ -1305,7 +1361,7 @@ fn frame(
                         }
                     }
                 };
-                match st.remix.create_mesh(hash_of(&key), &data.verts, &data.idx, rm) {
+                match st.remix.create_mesh(hash_of(&key), &wide(&data.verts), &data.idx, rm) {
                     Ok(h) => {
                         st.meshes.insert(key, h);
                         h
@@ -1443,6 +1499,7 @@ fn frame(
     if st.frames % 600 == 1 {
         info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}, light cards and refracting shells left out {}, with a view-angle falloff {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3], st.why[4], st.why[5]);
         let n = 600.0;
+        info!("remix: textures sharing the texture of the same contents: {} ({:.0} MB not uploaded)", st.same_count, st.same_bytes as f64 / 1e6);
         info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place; {} retained instances, {} made or described again, {} moved", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed, st.retained.len(), st.ret_made, st.ret_moved);
         st.ret_made = 0;
         st.ret_moved = 0;
@@ -1516,13 +1573,13 @@ fn material(st: &mut RemixState, id: UntypedAssetId, b: &StandardMaterial) -> Op
         hash: hash_of(&(id, st.mat_gen.get(&id).copied().unwrap_or(0))),
         wrap: tex(&b.base_color_texture).and_then(|h| st.wrap.get(&h).copied()).unwrap_or([1, 1]),
         asset_key: tex(&b.base_color_texture).and_then(|h| st.d3d9.get(&h).copied()),
-        albedo: tex(&b.base_color_texture),
+        albedo: tex(&b.base_color_texture).map(|h| remix_tex(st, h)),
         // LOD terrain's normal maps are in model space (lod.rs), not the tangent space
         // Remix reads: left out.
-        normal: if b.depth_bias <= -50.0 { None } else { tex(&b.normal_map_texture) },
+        normal: if b.depth_bias <= -50.0 { None } else { tex(&b.normal_map_texture).map(|h| remix_tex(st, h)) },
         // An unlit surface (a screen) glows with its own picture [design: Remix lights
         // every surface; emission is how a picture shows unlit].
-        emissive: if b.unlit { tex(&b.base_color_texture) } else { tex(&b.emissive_texture) },
+        emissive: if b.unlit { tex(&b.base_color_texture) } else { tex(&b.emissive_texture) }.map(|h| remix_tex(st, h)),
         // A glow map at New Vegas RTX's glow intensity (rtx.fnvProtocol.glowEmissiveIntensity)
         // [documented: the wrapper's api_material.cpp, glow_intensity].
         // A lit shape glows only through a glow map, tinted by the material's emissive
@@ -1964,6 +2021,10 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         dynamic: HashSet::new(),
         ret_made: 0,
         ret_moved: 0,
+        contents: HashMap::new(),
+        same_bytes: 0,
+        same_count: 0,
+        alias: HashMap::new(),
     })
 }
 
@@ -2012,7 +2073,7 @@ fn falloff_refresh(st: &mut RemixState, cpu: &CpuMeshes, key: (AssetId<Mesh>, Un
             let scale = |c: u32, shift: u32| ((((c >> shift) & 0xFF) as f32 * op).round().clamp(0.0, 255.0) as u32) << shift;
             let c = v.color;
             let color = if add_whole { scale(c, 24) | scale(c, 16) | scale(c, 8) | scale(c, 0) } else { scale(c, 24) | (c & 0x00FF_FFFF) };
-            HardcodedVertex { color, ..*v }
+            HardcodedVertex { color, ..v.hw() }
         })
         .collect();
     if st.remix.refresh_mesh(hash, handle, &verts, &data.idx, mat) {
@@ -2211,7 +2272,7 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
             }
         }
     }
-    let tex = |st: &RemixState, h: &Option<Handle<Image>>| h.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x));
+    let tex = |st: &RemixState, h: &Option<Handle<Image>>| h.as_ref().map(|h| hash_of(&h.id())).filter(|x| st.textures.contains(x)).map(|x| remix_tex(st, x));
     for shapes in by_cell.values() {
         for &bi in shapes {
             let b = &all[bi];
@@ -2330,7 +2391,7 @@ fn terrain_materials(st: &mut RemixState, cpu: &CpuMeshes, all: &[ShapeIn<'_>]) 
                 wrap: [1, 1],
                 ..Default::default()
             };
-            let white: Vec<HardcodedVertex> = base.verts.iter().map(|v| HardcodedVertex { color: 0xFFFF_FFFF, ..*v }).collect();
+            let white: Vec<HardcodedVertex> = base.verts.iter().map(|v| HardcodedVertex { color: 0xFFFF_FFFF, ..v.hw() }).collect();
             let Ok(mat) = st.remix.create_terrain_material(&desc, &list, hashes, [su, sv], [ou, ov]) else {
                 st.errors += 1;
                 continue;

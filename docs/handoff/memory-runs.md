@@ -111,3 +111,25 @@ copy, so Bevy never uploads it (`NVF_REMIX_KEEP_BEVY_MESHES=1` keeps them).
   draws Bevy's copy of the world.
 - Same scene (4435 instances, 4451 visible shapes); screenshot mean difference 0.82/255
   against ab_ret0, the remaining spots a bighorner that walked and the sky.
+
+## 2026-11-10 11:4x-12:0x, packed CPU vertices and shared texture contents (runs ab_ret6, ab_ret8)
+
+- umdh (gflags +ust, `umdh -p`, resolved with the NVForever PDB) of a run at 16.3 GB:
+  4.40 GB of heap with stacks; 1.32 GB the Remix adapter's CPU mesh copies (64-byte
+  vertices, 28 of them padding), 1.62 GB decoded DDS data. [observed] +ust slowed the
+  game to a crawl, so the snapshot caught the texture upload queue undrained: not the
+  steady state. A census of the main world (NVF_GPU_REPORT) found Bevy's images holding
+  no pixel data (world textures at their 4x4 level).
+- vmwalk at 95 s (ab_ret6): private 16.34 GB = 10.02 GB write-combined (VRAM backing:
+  Remix about 8.6, Bevy 1.4) + 6.08 GB read/write.
+- CPU mesh copies keep a 36-byte vertex (widened when sent): private 16.89 -> 16.39 GB.
+- Textures of the same contents (format, size, levels, pixels) share one Remix texture,
+  each keeping its own addressing and D3D9 hash: 109 textures, 360 MB not uploaded;
+  Remix material textures 4217 -> 3927 MiB. ab_ret8: private 16.06 GB, VRAM 10.66 GB,
+  commit free 11.5 GB; 40.6 fps (p50 24.2 ms), GPU 17.5 ms; screenshot mean difference
+  0.77/255, pixels more than 48 apart 0.018 %.
+- A census bug of this session's own (counting vertices of extracted meshes) panicked at
+  70 s in ab_ret6/ab_ret7; fixed before ab_ret8.
+
+Totals since the morning (Remix on, same place): private 18.7 -> 16.1 GB, VRAM (card)
+12.77 -> 10.66 GB, frames 29.1 -> 40.6 a second (p50 34.1 -> 24.2 ms).
