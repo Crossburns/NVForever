@@ -172,11 +172,17 @@ fn geometry_key(positions: &[[f32; 3]], indices: &[u32]) -> u64 {
     let mut pos = 0u64;
     for (v, p) in positions.iter().enumerate() {
         if used[v] {
-            let b: Vec<u8> = p.iter().flat_map(|f| f.to_le_bytes()).collect();
+            let mut b = [0u8; 12];
+            for (k, f) in p.iter().enumerate() {
+                b[k * 4..k * 4 + 4].copy_from_slice(&f.to_le_bytes());
+            }
             pos = XxHash3_64::oneshot_with_seed(pos, &b);
         }
     }
-    let ib: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+    let mut ib: Vec<u8> = Vec::with_capacity(indices.len() * 4);
+    for i in indices {
+        ib.extend_from_slice(&i.to_le_bytes());
+    }
     let idx = XxHash3_64::oneshot(&ib);
     let mut desc = XxHash3_64::oneshot_with_seed(0, &(indices.len() as u32).to_le_bytes());
     desc = XxHash3_64::oneshot_with_seed(desc, &(positions.len() as u32).to_le_bytes());
@@ -395,6 +401,10 @@ struct RemixState {
     /// How far from the eye shapes the camera does not see stay in the traced scene
     /// (NVF_REMIX_MEMBER_RADIUS, game units).
     member_radius: f32,
+    /// The scene from Bevy's views and `member_radius` (the default); `NVF_REMIX_SCENE=world`:
+    /// every loaded shape in its distance range, as New Vegas RTX [observed 2026-11-10:
+    /// 4434 -> 6484 instances, 41.6 -> 34.3 fps, +1.7 GB in Goodsprings; not the default].
+    scene_from_view: bool,
     /// Textures waiting for their upload, oldest first, and their hashes: a frame uploads
     /// at most `UPLOAD_BYTES_A_FRAME` of them (the runtime keeps each upload's pixels
     /// until the GPU has them; every texture of a cell in one frame cost gigabytes of
@@ -530,6 +540,25 @@ fn destroy_texture(st: &mut RemixState, h: u64) {
     st.remix.destroy_texture(h as ffi::TextureHandle);
     st.contents.retain(|_, v| *v != h);
     st.released[2] += 1;
+}
+
+/// Whether a shape of distance range `r` is in the traced scene at `d` from the eye: Bevy's
+/// dithered range taken as drawn while at least half its pixels are (fading in: half or
+/// more; fading out: more than half), so of a cell and the LOD that crossfades with it
+/// (complementary ranges, fade.rs) exactly one is in the scene [design: Remix has no
+/// dither; documented: bevy_camera visibility/range.rs, margins as linear fades].
+fn in_range(r: &bevy::camera::visibility::VisibilityRange, d: f32) -> bool {
+    if !r.is_visible_at_all(d) {
+        return false;
+    }
+    let (s, e) = (&r.start_margin, &r.end_margin);
+    if d < s.end && s.end > s.start {
+        return (d - s.start) / (s.end - s.start) >= 0.5;
+    }
+    if d >= e.start && e.end > e.start {
+        return (e.end - d) / (e.end - e.start) > 0.5;
+    }
+    true
 }
 
 /// Retained instances of `mesh` go before it does [documented: remix_c.h, "Destroy a
@@ -884,6 +913,7 @@ type ShapeParts<M> = (
     Option<&'static RenderLayers>,
     Has<crate::terrain::LandMesh>,
     Option<&'static ChildOf>,
+    Option<&'static bevy::camera::visibility::VisibilityRange>,
 );
 
 /// The shapes of every material type built on Bevy's standard material: the NIF
@@ -900,7 +930,7 @@ struct Shapes<'w, 's> {
     bill_m: Res<'w, Assets<crate::tree::BillboardMaterial>>,
     grass: Query<'w, 's, ShapeParts<crate::grass::GrassMaterial>>,
     grass_m: Res<'w, Assets<crate::grass::GrassMaterial>>,
-    water: Query<'w, 's, (&'static Mesh3d, &'static MeshMaterial3d<crate::water::WaterMaterial>, &'static GlobalTransform, &'static ViewVisibility)>,
+    water: Query<'w, 's, (&'static Mesh3d, &'static MeshMaterial3d<crate::water::WaterMaterial>, &'static GlobalTransform, &'static ViewVisibility, &'static InheritedVisibility)>,
     water_m: Res<'w, Assets<crate::water::WaterMaterial>>,
 }
 
@@ -939,6 +969,8 @@ struct ShapeIn<'a> {
     add_whole: bool,
     /// What else the NIF material says that StandardMaterial does not hold.
     nif: NifExtra,
+    /// Its distance range (cell fades, LOD swaps, draw distances), if any.
+    range: Option<&'a bevy::camera::visibility::VisibilityRange>,
 }
 
 /// The NIF material's fields the Remix scene needs beyond StandardMaterial
@@ -966,9 +998,9 @@ impl<'w, 's> Shapes<'w, 's> {
             out: &mut Vec<ShapeIn<'a>>,
             flags: fn(&E) -> (bool, bool, NifExtra),
         ) {
-            for (entity, mesh, mat, gt, vis, shown, skinned, layers, land, parent) in q {
+            for (entity, mesh, mat, gt, vis, shown, skinned, layers, land, parent, range) in q {
                 let Some(material) = m.get(mat.id()) else { continue };
-                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: flags(&material.extension).0, add_whole: flags(&material.extension).1, nif: flags(&material.extension).2 });
+                out.push(ShapeIn { entity, mesh: mesh.id(), mat: mat.id().untyped(), base: &material.base, gt, vis: vis.get(), shown: shown.get(), skinned, layers, land, parent: parent.map(|p| p.parent()), decal: flags(&material.extension).0, add_whole: flags(&material.extension).1, nif: flags(&material.extension).2, range });
             }
         }
         let mut out = Vec::new();
@@ -1244,7 +1276,7 @@ fn frame(
     let all = shapes.all();
     terrain_materials(st, &cpu, &all);
     let mut moves: Vec<ffi::RetainedInstanceUpdate> = Vec::new();
-    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, add_whole, nif, .. } in all {
+    for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, add_whole, nif, range, .. } in all {
         // As New Vegas RTX: light cards are not in the traced scene; refracting shells only
         // bend what is behind them, which a path tracer has no use for [documented: the
         // wrapper's scene_statics.cpp light_card_shape; design for refraction].
@@ -1259,13 +1291,18 @@ fn frame(
         if nif.falloff.is_some() {
             why[5] += 1;
         }
-        // In the traced scene: what the camera sees, and everything the game shows within
-        // `member_radius` of the eye, seen or not: a path tracer needs what is behind and
-        // beside the camera for its shadows, reflections and bounced light (New Vegas RTX
-        // keeps every loaded static in the scene, drawn or not) [documented: its
-        // docs/fnv-api-only.md, "Statics: scene membership, not draws"].
+        // In the traced scene: everything the game shows (loaded, not hidden) whose distance
+        // range holds at the eye, seen by the camera or not, as New Vegas RTX keeps every
+        // loaded static in the scene, drawn or not [documented: its docs/fnv-api-only.md,
+        // "Statics: scene membership, not draws"]. Bevy's culling only orders what is built
+        // first (`seen`). That is `NVF_REMIX_SCENE=world`; by default the scene is what
+        // Bevy's views see and what is shown within `member_radius` (cheaper, see the field).
         let seen = vis;
-        let vis = vis || (shown && eye.is_some_and(|e| gt.translation().distance_squared(e) < st.member_radius * st.member_radius));
+        let vis = if st.scene_from_view {
+            vis || (shown && eye.is_some_and(|e| gt.translation().distance_squared(e) < st.member_radius * st.member_radius))
+        } else {
+            shown && range.is_none_or(|r| eye.is_none_or(|e| in_range(r, gt.translation().distance(e))))
+        };
         // Land: a blended layer already in its base's terrain material is not drawn alone.
         // (Test aid: NVF_REMIX_HIDE_LAND leaves the land out.)
         if land && (st.layered.contains(&mesh) || std::env::var_os("NVF_REMIX_HIDE_LAND").is_some()) {
@@ -1431,8 +1468,8 @@ fn frame(
 
     // Water: a translucent surface in the water type's colours [design: Remix's own
     // translucency stands in for NVForever's screen-space water shader].
-    for (mesh, mat, gt, vis) in &shapes.water {
-        if !vis.get() {
+    for (mesh, mat, gt, vis, shown) in &shapes.water {
+        if !(if st.scene_from_view { vis.get() } else { shown.get() }) {
             continue;
         }
         let key = (mesh.id(), mat.id().untyped());
@@ -2119,6 +2156,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         // lighting (NVF_REMIX_FILL_SCALE, e.g. 20000, turns it on as an artistic fill).
         fill_scale: scale("NVF_REMIX_FILL_SCALE", 0.0),
         member_radius: scale("NVF_REMIX_MEMBER_RADIUS", 8192.0),
+        scene_from_view: std::env::var("NVF_REMIX_SCENE").map_or(true, |v| v != "world"),
         upload_queue: Default::default(),
         queued: HashSet::new(),
         ui_last: None,

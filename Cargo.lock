@@ -519,6 +519,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "smallvec",
  "thiserror",
  "tracing",
 ]

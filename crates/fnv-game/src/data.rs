@@ -1556,6 +1556,9 @@ fn has_any_sub(r: &Record, subs: &[[u8; 4]]) -> bool {
 /// add-ons, 419,409 are REFR and 42,467 LAND [observed: count, 2026-11-06].
 const BULK_SIGS: [[u8; 4]; 6] = [*b"REFR", *b"ACHR", *b"ACRE", *b"PGRE", *b"LAND", *b"NAVM"];
 
+/// The [`BULK_SIGS`] types [`read_one`] never reads, unlooked into ([`reads_nothing`]).
+const UNREAD_SIGS: [[u8; 4]; 1] = [*b"LAND"];
+
 /// All that [`read_one`] looks for in a record of the [`BULK_SIGS`] types: the name fields
 /// and script every record may have, a destructible's data, a patrol point's script and an
 /// owner's rank.
@@ -1568,6 +1571,13 @@ const BULK_READ_SUBS: [[u8; 4]; 6] = [*b"EDID", *b"FULL", *b"SCRI", *b"DEST", *b
 fn reads_nothing(r: &Record) -> bool {
     if !BULK_SIGS.contains(&r.header.sig) {
         return false;
+    }
+    // Land carries none of the fields read_one looks for and is stored compressed: looking
+    // would inflate every LAND at every start [hypothesis: the game's LAND records have no
+    // EDID, FULL, SCRI, DEST, XPPA or XRNK; 42,467 LAND in the base game, observed
+    // 2026-11-06]. A LAND given a name by a plugin is not named.
+    if UNREAD_SIGS.contains(&r.header.sig) {
+        return true;
     }
     let mut found = false;
     r.visit_subrecords(|sig, _| found |= BULK_READ_SUBS.contains(sig)).is_ok() && !found
@@ -2595,6 +2605,10 @@ fn topic_lines(lo: &LoadOrder) -> TopicLines {
 fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usize, r: &Record) -> Read {
     let mut out = Read::default();
     let sig = r.header.sig;
+    // Land is not read for names, scripts or the rest ([`UNREAD_SIGS`]), the long way or not.
+    if UNREAD_SIGS.contains(&sig) {
+        return out;
+    }
     let subs = match r.subrecords() {
         Ok(s) => s,
         Err(e) => {
@@ -3806,7 +3820,7 @@ mod reads_nothing_tests {
     fn a_subrecord_read_one_looks_for_keeps_the_record() {
         for s in BULK_READ_SUBS {
             let payload = write_subrecords(&[sub(*b"DATA", &[0; 24]), sub(s, &[0; 4])]);
-            let records: Vec<Vec<u8>> = BULK_SIGS.iter().enumerate().map(|(i, b)| record(b, 0x800 + i as u32, &payload)).collect();
+            let records: Vec<Vec<u8>> = BULK_SIGS.iter().filter(|b| !UNREAD_SIGS.contains(b)).enumerate().map(|(i, b)| record(b, 0x800 + i as u32, &payload)).collect();
             each(&records, |r, _| assert!(!reads_nothing(r), "{} {}", r.sig_str(), fnv_util::tag_str(&s)));
         }
         // Another record type is always read, and so is one that cannot be read (its issue

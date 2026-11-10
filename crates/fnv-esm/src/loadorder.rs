@@ -37,7 +37,10 @@ pub struct LoadOrder<'a> {
     /// Records of each plugin in file order.
     pub records: Vec<Vec<&'a Record>>,
     /// Global FormID -> every definition in load order (last one wins).
-    pub index: HashMap<u32, Vec<DefRef>>,
+    /// Each FormID's definitions, inline for up to two (nearly all: one, or a master and
+    /// one override) instead of a heap vector each [observed 2026-11-10: about 628,000
+    /// FormIDs in the HND load order].
+    pub index: HashMap<u32, smallvec::SmallVec<[DefRef; 2]>>,
     /// Records whose own FormID could not be mapped (none since an out-of-range master
     /// index means the plugin itself; kept for reports).
     pub unmappable: Vec<(u8, u32)>,

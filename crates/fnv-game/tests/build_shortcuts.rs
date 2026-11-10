@@ -288,9 +288,11 @@ fn assert_fixture(d: &GameData) {
     assert_eq!(d.owner_ranks.get(&f(0x816)), Some(&3));
     assert_eq!(d.owner_ranks.get(&f(0x81A)), Some(&1));
     assert!(d.destructibles.contains_key(&f(0x817)));
-    for (form, name) in [(0x818, "ActorRef"), (0x81F, "NavWithName"), (0x821, "LandWithName"), (0x825, "RefCompressed")] {
+    for (form, name) in [(0x818, "ActorRef"), (0x81F, "NavWithName"), (0x825, "RefCompressed")] {
         assert_eq!(d.name(f(form)), name);
     }
+    // Land is never looked into (data.rs reads_nothing): a named LAND keeps no name.
+    assert_eq!(d.name(f(0x821)), "0x00000821");
     // Skipped ones are still known by type.
     for (form, sig) in [(0x819, b"ACHR"), (0x81B, b"ACRE"), (0x81D, b"PGRE"), (0x81E, b"NAVM"), (0x820, b"LAND"), (0x824, b"REFR"), (0x82A, b"REFR"), (0x881, b"REFR")] {
         assert_eq!(d.sigs.get(&f(form)), Some(sig), "{form:X}");

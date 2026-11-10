@@ -244,8 +244,9 @@ fn hop_or_obstacle(phys: &mut PhysState, id: u32, f: &fnv_nav::Follower, walker:
     }
     let dir = [want[0] / asked, want[1] / asked, 0.0];
     let reach = radius + OBSTACLE_REACH;
-    let mut filter = fnv_phys::Filter { exclude_layers: fnv_phys::layers::character_ignores().union(fnv_phys::layers::actor_volumes()), ..Default::default() };
-    filter.exclude.extend(phys.npcs.values().map(|n| n.ch.key()));
+    // Actors are no obstacle to jump (a flag test, not a list of every NPC's collider
+    // copied and scanned for each probe).
+    let filter = fnv_phys::Filter { exclude_layers: fnv_phys::layers::character_ignores().union(fnv_phys::layers::actor_volumes()), no_actors: true, ..Default::default() };
     let probe = |phys: &mut PhysState, h: f32| phys.ray([feet[0], feet[1], feet[2] + h], dir, reach * 2.0, filter.clone()).map(|hit| hit.distance);
     let (low, high) = (probe(phys, OBSTACLE_LOW), probe(phys, OBSTACLE_HIGH));
     if fnv_nav::jump::obstacle_jumpable(low, high, reach) {
