@@ -19,6 +19,10 @@ use std::sync::{Arc, Mutex};
 #[derive(Resource, Default)]
 pub struct TextureCache {
     map: HashMap<(String, bool), Option<Handle<Image>>>,
+    /// Each handle's path, the cache's or a worker's (`name_of`): a worker's handle the map
+    /// did not keep (the main thread loaded the same file first) still has its name, which
+    /// the Remix adapter needs to treat it as a world texture.
+    names: HashMap<AssetId<Image>, String>,
     /// Copies sampled with clamped edges ([`Self::get_clamped`]), by the same key.
     clamped: HashMap<(String, bool), Option<Handle<Image>>>,
     /// Files read ahead on a worker thread ([`Self::offer`]), by resolved path, with when
@@ -271,9 +275,9 @@ pub fn is_first_person_texture(path: &str) -> bool {
 }
 
 impl TextureCache {
-    /// The texture path an image was loaded from (a linear search: test aids only).
+    /// The texture path an image was loaded from (the cache's or a worker's handle).
     pub fn name_of(&self, id: AssetId<Image>) -> Option<&str> {
-        self.map.iter().chain(self.clamped.iter()).find(|(_, h)| h.as_ref().is_some_and(|h| h.id() == id)).map(|((n, _), _)| n.as_str())
+        self.names.get(&id).map(String::as_str)
     }
 
     /// Drop the textures nothing else holds (no live material uses them), after their
@@ -308,7 +312,9 @@ impl TextureCache {
         self.workers.entries.lock().expect("worker textures").retain(|_, w| w.stored_at.is_none_or(|t| now - t < WORKER_KEEP_SECS));
         let drop = idle.sweep_timed(now, entries, keep.secs, keep.max, |k| ids.get(k).and_then(|&id| hints.since(id)));
         for ((p, srgb, clamp), _) in &drop {
-            (if *clamp { &mut self.clamped } else { &mut self.map }).remove(&(p.clone(), *srgb));
+            if let Some(Some(h)) = (if *clamp { &mut self.clamped } else { &mut self.map }).remove(&(p.clone(), *srgb)) {
+                self.names.remove(&h.id());
+            }
         }
         self.generation += u64::from(!drop.is_empty());
         drop.len()
@@ -323,6 +329,7 @@ impl TextureCache {
         for (key, w) in entries.iter_mut() {
             let Some(image) = w.image.take() else { continue };
             if images.insert(w.handle.id(), image).is_ok() {
+                self.names.insert(w.handle.id(), key.0.clone());
                 self.map.entry(key.clone()).or_insert_with(|| Some(w.handle.clone()));
                 n += 1;
             }
@@ -430,6 +437,7 @@ impl TextureCache {
                 }
                 let h = w.handle.clone();
                 drop(entries);
+                self.names.insert(h.id(), path.clone());
                 self.map.insert((path, srgb), Some(h.clone()));
                 self.generation += 1;
                 return Some(h);
@@ -461,6 +469,9 @@ impl TextureCache {
                 None
             }
         };
+        if let Some(h) = &handle {
+            self.names.insert(h.id(), path.clone());
+        }
         (if clamp { &mut self.clamped } else { &mut self.map }).insert((path, srgb), handle.clone());
         self.generation += 1;
         handle

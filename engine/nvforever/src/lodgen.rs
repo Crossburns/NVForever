@@ -403,6 +403,11 @@ pub struct MipStore {
 }
 
 impl MipStore {
+    /// Forget every decoded level (those in use stay alive with their users).
+    pub fn clear(&self) {
+        self.map.lock().unwrap().clear();
+    }
+
     /// The smallest level of a texture at least `target` texels wide, in linear RGB.
     fn get(&self, data: &GameData, raw: &str, target: usize) -> Option<Arc<Mip>> {
         let key = (fnv_vfs::texture_path(raw), target);
@@ -585,7 +590,14 @@ impl Baker {
                 lowest_thread_priority();
                 while let Some(chunk) = shared.next() {
                     let result = job.run(chunk);
-                    shared.state.lock().unwrap().done.push_back((chunk, result));
+                    let mut s = shared.state.lock().unwrap();
+                    s.done.push_back((chunk, result));
+                    // Nothing left to bake: the decoded textures go (12 bytes a texel, kept
+                    // for the whole session before); a later bake decodes what it needs again.
+                    if s.waiting.is_empty() {
+                        drop(s);
+                        job.mips.clear();
+                    }
                 }
             });
             if let Err(e) = spawned {

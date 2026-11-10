@@ -1390,6 +1390,7 @@ fn main() -> AppExit {
     .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     .init_resource::<TerrainCache>()
+    .add_systems(Last, terrain::sweep_terrain_cache)
     .init_resource::<imposters::Imposters>()
     .insert_resource(Streamer {
         radius: args.radius,

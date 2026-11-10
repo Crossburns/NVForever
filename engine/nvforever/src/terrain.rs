@@ -45,9 +45,36 @@ pub struct TerrainCache {
     layer: HashMap<(String, usize), Handle<NifMaterial>>,
     pub quadrants_without_base: usize,
     pub layers: usize,
+    /// When each material only this cache held was first seen so (real seconds).
+    unused_since: HashMap<AssetId<NifMaterial>, f64>,
 }
 
 impl TerrainCache {
+    /// Let go of the landscape materials no drawn land has used for the caches' keep time,
+    /// so their textures can be released too: kept for the whole session before, every
+    /// landscape texture of every cell visited stayed loaded [observed 2026-11-10: memory
+    /// climbing on travel]. Returns how many went.
+    pub fn sweep(&mut self, now: f64, keep_secs: f64) -> usize {
+        let unused = &mut self.unused_since;
+        let mut gone = 0;
+        let mut keep = |h: &Handle<NifMaterial>| {
+            if nvf_assets::release::held_beyond(h, 1) {
+                unused.remove(&h.id());
+                return true;
+            }
+            let since = *unused.entry(h.id()).or_insert(now);
+            if now - since < keep_secs {
+                return true;
+            }
+            unused.remove(&h.id());
+            gone += 1;
+            false
+        };
+        self.base.retain(|_, h| keep(h));
+        self.layer.retain(|_, h| keep(h));
+        gone
+    }
+
     /// The landscape materials held, for the stress census.
     pub fn share(&self, materials: &Assets<NifMaterial>) -> nvf_assets::release::CacheShare {
         let mut s = nvf_assets::release::CacheShare::default();
@@ -275,6 +302,22 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
     }
     land
 }
+
+/// The landscape materials' sweep, on the caches' sweep interval and keep time.
+pub fn sweep_terrain_cache(time: Res<Time<Real>>, keep: Option<Res<nvf_assets::release::KeepLimits>>, mut cache: ResMut<TerrainCache>, mut last: Local<f64>) {
+    // The viewer keeps everything it loaded (no release plugin, no limits).
+    let Some(keep) = keep else { return };
+    let now = time.elapsed_secs_f64();
+    if now - *last < f64::from(nvf_assets::release::SWEEP_SECS) {
+        return;
+    }
+    *last = now;
+    let gone = cache.sweep(now, keep.secs);
+    if gone > 0 {
+        debug!("terrain: {gone} landscape materials let go");
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
