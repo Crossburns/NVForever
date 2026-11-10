@@ -27,6 +27,12 @@ single slow frame charged to a render system that only writes a buffer
 (`upload_light_probes`, `write_binned_instance_buffers`) can be matched to a new memory
 block. `std` is linked for the clock (wgpu-hal turns the crate's `std` feature off).
 
+Third change (2026-11-10), in `src/vulkan/mod.rs` (`LIVE`, `memlog`): with `NVF_GPU_MEMLOG`
+set, every memory block made or freed logs `gpu memlog: +/-<n> MiB type <t> (...); live
+MiB: ...`, the live total per Vulkan memory type, so the game's own device memory can be
+set against the process's committed memory (docs/handoff/memory-runs.md). Without the
+variable it only counts.
+
 ## bevy_pbr 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 Bevy's 3D passes, for FSR upscaling (docs/design/fsr-upscaling.md), which draws the main
@@ -115,3 +121,11 @@ generation, the SDK's samples and prebuilt binaries.
   `MaterialBindlessSlab::get_bindless_index_table`, reversed in 0.19.1, which kept freed
   `ExtendedMaterial`s' textures in the slabs. Fixed upstream (bevyengine/bevy#25848);
   Bevy 0.20 has the fix, in `bevy_render::material_bind_groups` (#934).
+
+bevy_render, second change (2026-11-10), in `src/gpu_readback.rs`, marked `NVForever readback pool`:
+`map_buffers` fills a buffer from a small pool (`recycle_readback_data`, public) instead of
+a new `Vec` for each readback. The Remix UI overlay reads the whole window back every
+frame (14.7 MB at 2560x1440); allocated and freed each frame it cost about 4 ms a frame in
+copies, page faults and frees [observed: Superluminal, Goodsprings]. Its observer takes
+the data (`On::event_mut`) and hands buffers back. Without callers of
+`recycle_readback_data` the pool stays empty and readbacks allocate as upstream.

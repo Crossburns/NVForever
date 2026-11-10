@@ -348,6 +348,31 @@ pub(crate) struct MemoryBlock {
     pub(crate) sub_allocator: Box<dyn SubAllocator>,
     #[cfg(feature = "visualizer")]
     pub(crate) dedicated_allocation: bool,
+    mem_type_index: usize,
+}
+
+/// NVForever: live bytes of device memory per memory type, logged with NVF_GPU_MEMLOG.
+static LIVE: [core::sync::atomic::AtomicU64; 32] = [const { core::sync::atomic::AtomicU64::new(0) }; 32];
+
+fn memlog(delta: &str, size: u64, mem_type_index: usize, mapped: bool, dedicated: bool) {
+    if std::env::var_os("NVF_GPU_MEMLOG").is_none() {
+        return;
+    }
+    let live: std::vec::Vec<std::string::String> = LIVE
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            let b = b.load(core::sync::atomic::Ordering::Relaxed);
+            (b > 0).then(|| std::format!("t{i} {:.0}", b as f64 / 1048576.0))
+        })
+        .collect();
+    log::info!(
+        "gpu memlog: {delta}{:.1} MiB type {mem_type_index} ({}, {}); live MiB: {}",
+        size as f64 / 1048576.0,
+        if mapped { "host-visible" } else { "device-local" },
+        if dedicated { "dedicated" } else { "general" },
+        live.join(", ")
+    );
 }
 
 impl MemoryBlock {
@@ -408,6 +433,8 @@ impl MemoryBlock {
                     );
                 }
             }
+            LIVE[mem_type_index].fetch_add(size, core::sync::atomic::Ordering::Relaxed);
+            memlog("+", size, mem_type_index, mapped, allocation_scheme != AllocationScheme::GpuAllocatorManaged || requires_personal_block);
             memory
         };
 
@@ -449,10 +476,13 @@ impl MemoryBlock {
             sub_allocator,
             #[cfg(feature = "visualizer")]
             dedicated_allocation: allocation_scheme != AllocationScheme::GpuAllocatorManaged,
+            mem_type_index,
         })
     }
 
     fn destroy(self, device: &ash::Device) {
+        LIVE[self.mem_type_index].fetch_sub(self.size, core::sync::atomic::Ordering::Relaxed);
+        memlog("-", self.size, self.mem_type_index, self.mapped_ptr.is_some(), !self.sub_allocator.supports_general_allocations());
         if self.mapped_ptr.is_some() {
             unsafe { device.unmap_memory(self.device_memory) };
         }

@@ -141,10 +141,32 @@ fn name_of(e: Entity, nodes: &NodeQuery, rig: &HashMap<Entity, String>) -> Strin
     nodes.get(e).ok().and_then(|n| n.0.map(|n| n.as_str().to_string())).or_else(|| rig.get(&e).cloned()).unwrap_or_default()
 }
 
-/// The node of that name under `root`: exactly, else without regard to case.
-fn find(root: Entity, name: &str, nodes: &NodeQuery, rig: &HashMap<Entity, String>) -> Option<Entity> {
-    let all = walk(root, nodes);
-    all.iter().map(|(e, _)| *e).find(|&e| name_of(e, nodes, rig) == name).or_else(|| all.iter().map(|(e, _)| *e).find(|&e| name_of(e, nodes, rig).eq_ignore_ascii_case(name)))
+
+/// A frame's lookups, made once per reference: its root, and its node tree's entities with
+/// their names in walk order. Edits are commands, applied after the system, so neither
+/// changes within it [observed 2026-11-10, Superluminal: root_for, find and name_of about
+/// 1.6 ms a frame with every held node scanning every drawn reference and naming the whole
+/// tree again].
+#[derive(Default)]
+struct FrameLookups {
+    roots: HashMap<u32, Option<Entity>>,
+    named: HashMap<u32, Vec<(Entity, String)>>,
+}
+
+impl FrameLookups {
+    fn root(&mut self, r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Visuals, body: Option<&crate::player_body::PlayerBody>) -> Option<Entity> {
+        *self.roots.entry(r).or_insert_with(|| root_for(r, actors, visuals, body))
+    }
+
+    /// The node of that name under `root` (the cached tree of `r`): exactly, else without
+    /// regard to case.
+    fn find(&mut self, r: u32, root: Entity, name: &str, nodes: &NodeQuery, actors: &Query<(Entity, &ActorRig)>, body: Option<&crate::player_body::PlayerBody>) -> Option<Entity> {
+        let all = self.named.entry(r).or_insert_with(|| {
+            let rig = rig_for(r, actors, body);
+            walk(root, nodes).into_iter().map(|(e, _)| (e, name_of(e, nodes, &rig))).collect()
+        });
+        all.iter().find(|(_, n)| n == name).or_else(|| all.iter().find(|(_, n)| n.eq_ignore_ascii_case(name))).map(|(e, _)| *e)
+    }
 }
 
 /// The material side of [`mirror`]: the data files, the shapes' materials, the assets.
@@ -165,12 +187,12 @@ fn mirror(
     let Memory { logged, held, tables, materials, owned } = &mut *mem;
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
     let edits = rt.game.scene.take_edits();
+    let mut look = FrameLookups::default();
     for edit in edits {
         let r = match &edit {
             SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Material { r, .. } => *r,
         };
-        let Some(root) = root_for(r.0, &actors, &visuals, body.as_deref()) else { continue };
-        let rig = rig_for(r.0, &actors, body.as_deref());
+        let Some(root) = look.root(r.0, &actors, &visuals, body.as_deref()) else { continue };
         match edit {
             // A transform a script sets holds over the animation, frame after frame
             // [observed: set-then-read stays exact on an animated bone].
@@ -181,7 +203,7 @@ fn mirror(
             }
             SceneEdit::Scale { node, v, .. } => held.entry((r.0, node)).or_default().scale = Some(v),
             SceneEdit::Flags { node, flags, .. } => {
-                if let Some(e) = find(root, &node, &nodes, &rig) {
+                if let Some(e) = look.find(r.0, root, &node, &nodes, &actors, body.as_deref()) {
                     if flags & 1 != 0 {
                         commands.entity(e).insert((NifHidden, Visibility::Hidden));
                     } else {
@@ -190,7 +212,7 @@ fn mirror(
                 }
             }
             SceneEdit::Rename { node, to, .. } => {
-                if let Some(e) = find(root, &node, &nodes, &rig) {
+                if let Some(e) = look.find(r.0, root, &node, &nodes, &actors, body.as_deref()) {
                     commands.entity(e).insert(Name::new(to.clone()));
                     if let Some(h) = held.remove(&(r.0, node)) {
                         held.insert((r.0, to), h);
@@ -198,13 +220,13 @@ fn mirror(
                 }
             }
             SceneEdit::Remove { node, .. } => {
-                if let Some(e) = find(root, &node, &nodes, &rig) {
+                if let Some(e) = look.find(r.0, root, &node, &nodes, &actors, body.as_deref()) {
                     commands.entity(e).despawn();
                 }
                 held.remove(&(r.0, node));
             }
             SceneEdit::Insert { target, name, as_parent, .. } => {
-                let Some(t) = find(root, &target, &nodes, &rig) else { continue };
+                let Some(t) = look.find(r.0, root, &target, &nodes, &actors, body.as_deref()) else { continue };
                 let new = commands.spawn((Name::new(name), Transform::IDENTITY, Visibility::Inherited)).id();
                 if as_parent {
                     let above = parents.get(t).map(|p| p.parent()).unwrap_or(root);
@@ -229,7 +251,7 @@ fn mirror(
                 let vals = materials.entry((r.0, node.clone())).or_insert(start);
                 vals[id] = v;
                 let vals = *vals;
-                let (Some(e), Some(assets)) = (find(root, &node, &nodes, &rig), assets.as_deref_mut()) else { continue };
+                let (Some(e), Some(assets)) = (look.find(r.0, root, &node, &nodes, &actors, body.as_deref()), assets.as_deref_mut()) else { continue };
                 let Ok(handle) = drawn.get(e) else { continue };
                 match owned.get(&e).filter(|h| *h == &handle.0).cloned() {
                     Some(h) => {
@@ -251,10 +273,9 @@ fn mirror(
     // The held transforms, over this frame's pose.
     let keys: Vec<(u32, String)> = held.keys().cloned().collect();
     for (r, node) in keys {
-        let Some(root) = root_for(r, &actors, &visuals, body.as_deref()) else { continue };
-        let rig = rig_for(r, &actors, body.as_deref());
+        let Some(root) = look.root(r, &actors, &visuals, body.as_deref()) else { continue };
         let h = held[&(r, node.clone())];
-        if let Some(mut t) = find(root, &node, &nodes, &rig).and_then(|e| nodes.get_mut(e).ok()) {
+        if let Some(mut t) = look.find(r, root, &node, &nodes, &actors, body.as_deref()).and_then(|e| nodes.get_mut(e).ok()) {
             if let Some(v) = h.translation {
                 t.1.translation = v;
             }
@@ -294,7 +315,7 @@ fn mirror(
     // The trees of the references scripts asked about.
     let watched: Vec<FormId> = rt.game.scene.watched().collect();
     for r in watched {
-        let Some(root) = root_for(r.0, &actors, &visuals, body.as_deref()) else {
+        let Some(root) = look.root(r.0, &actors, &visuals, body.as_deref()) else {
             if logged.insert(r.0) {
                 info!("nif mirror: {:08X} watched, not drawn", r.0);
             }
@@ -304,9 +325,10 @@ fn mirror(
         let rig = rig_for(r.0, &actors, body.as_deref());
         let mut seen: HashMap<String, u32> = HashMap::new();
         let model = fnv_game::nif_blocks::model_of(&rt.game, r).unwrap_or_default();
+        let none = HashMap::new();
         let table = match data.as_deref() {
-            Some(d) => tables.entry(model.clone()).or_insert_with(|| material_table(d, &model)).clone(),
-            None => HashMap::new(),
+            Some(d) => &*tables.entry(model.clone()).or_insert_with(|| material_table(d, &model)),
+            None => &none,
         };
         let tree: Vec<SceneNode> = walk(root, &nodes)
             .into_iter()

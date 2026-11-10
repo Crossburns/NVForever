@@ -498,3 +498,37 @@ mod tests {
         assert_eq!(size_of::<StartupInfo>(), 4 + 4 + 8 + 8 + 16);
     }
 }
+
+/// Retained instances: a draw registered once and replayed by one DrawRetainedInstances a
+/// frame [documented: remix_c.h, "Retained instances"; named exports, not in the
+/// interface table].
+pub const RETAINED_UPDATE_TRANSFORM: u32 = 0x1;
+pub const RETAINED_UPDATE_VISIBILITY: u32 = 0x2;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RetainedInstanceUpdate {
+    pub handle: u64,
+    /// Absolute; read with RETAINED_UPDATE_TRANSFORM.
+    pub transform: Transform,
+    /// RETAINED_UPDATE_*.
+    pub flags: u32,
+    /// Read with RETAINED_UPDATE_VISIBILITY.
+    pub visible: Bool,
+}
+
+pub type CreateRetainedInstances = unsafe extern "system" fn(infos: *const InstanceInfo, count: u32, out_handles: *mut u64) -> ErrorCode;
+pub type UpdateRetainedInstance = unsafe extern "system" fn(handle: u64, info: *const InstanceInfo) -> ErrorCode;
+pub type UpdateRetainedInstances = unsafe extern "system" fn(updates: *const RetainedInstanceUpdate, count: u32) -> ErrorCode;
+pub type DestroyRetainedInstances = unsafe extern "system" fn(handles: *const u64, count: u32) -> ErrorCode;
+pub type DrawRetainedInstances = unsafe extern "system" fn(scene_origin: *const f32) -> ErrorCode;
+
+/// The retained-instance exports, when the runtime has all of them.
+#[derive(Clone, Copy)]
+pub struct RetainedApi {
+    pub create_many: CreateRetainedInstances,
+    pub update: UpdateRetainedInstance,
+    pub update_many: UpdateRetainedInstances,
+    pub destroy: DestroyRetainedInstances,
+    pub draw: DrawRetainedInstances,
+}

@@ -15,8 +15,15 @@ impl Game<'_> {
     /// The references now in `cell`, in FormID order: placed there or moved there. One
     /// picked up (deleted) only with `taken` [documented: GetFirstRef, IncludeTakenRefs].
     pub(crate) fn refs_in_cell(&self, cell: FormId, taken: bool) -> Vec<FormId> {
+        let moved: Vec<FormId> = self.world.changed().filter(|(_, s)| s.cell == Some(cell)).map(|(r, _)| r).collect();
+        self.refs_in_cell_with(cell, taken, &moved)
+    }
+
+    /// [`Game::refs_in_cell`] with the references whose state puts them in `cell` already
+    /// found (a walk over many cells groups them once instead of once a cell).
+    fn refs_in_cell_with(&self, cell: FormId, taken: bool, moved: &[FormId]) -> Vec<FormId> {
         let mut out: Vec<FormId> = self.world.placed.by_cell.get(&cell).into_iter().flatten().copied().collect();
-        out.extend(self.world.changed().filter(|(_, s)| s.cell == Some(cell)).map(|(r, _)| r));
+        out.extend_from_slice(moved);
         out.sort();
         out.dedup();
         out.retain(|&r| self.cell_of(r) == Some(cell) && (taken || !self.world.peek(r).is_some_and(|s| s.deleted())));
@@ -68,11 +75,21 @@ impl Game<'_> {
         let Some(cell) = cell.or(here) else { return Vec::new() };
         let loaded: Vec<FormId> = here.map(|h| self.scan_cells(h, 2)).unwrap_or_default();
         let cells = if depth > 0 { self.scan_cells(cell, depth) } else { vec![cell] };
+        // The references whose state places them in a walked cell, grouped once: per cell,
+        // every changed reference was scanned again [observed 2026-11-10, Superluminal:
+        // a mod's walks each frame, RefTable::get and ref_of_type about 1.7 ms a frame].
+        let mut moved: std::collections::HashMap<FormId, Vec<FormId>> = std::collections::HashMap::new();
+        for (r, st) in self.world.changed() {
+            if let Some(c) = st.cell.filter(|c| cells.contains(c)) {
+                moved.entry(c).or_default().push(r);
+            }
+        }
         cells
             .into_iter()
             .flat_map(|c| {
                 let open = loaded.contains(&c);
-                self.refs_in_cell(c, taken).into_iter().filter(move |&r| open || self.persistent(r))
+                let list = self.refs_in_cell_with(c, taken, moved.get(&c).map_or(&[][..], Vec::as_slice));
+                list.into_iter().filter(move |&r| open || self.persistent(r))
             })
             // The player is not in the walk [observed: nvse-eighth, GetFirstRef 200 in the
             // player's cell skips the player].

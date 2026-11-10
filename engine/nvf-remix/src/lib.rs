@@ -57,6 +57,7 @@ pub fn texture_ref(hash: u64) -> Vec<u16> {
 /// The loaded runtime.
 pub struct Remix {
     api: Interface,
+    retained: Option<RetainedApi>,
     _lib: libloading::Library,
     pub dll: PathBuf,
     started: bool,
@@ -157,7 +158,20 @@ impl Remix {
         if api.Startup.is_none() || api.Present.is_none() || api.CreateMesh.is_none() || api.DrawInstance.is_none() {
             return Err("the Remix runtime lacks the scene API (Startup, Present, CreateMesh, DrawInstance)".into());
         }
-        Ok(Remix { api, _lib: lib, dll: dll.to_path_buf(), started: false, _not_send: std::marker::PhantomData })
+        // SAFETY: each symbol's type is its remix_c.h PFN_remixapi_* typedef.
+        let retained = unsafe {
+            match (
+                lib.get::<CreateRetainedInstances>(b"remixapi_CreateRetainedInstances\0"),
+                lib.get::<UpdateRetainedInstance>(b"remixapi_UpdateRetainedInstance\0"),
+                lib.get::<UpdateRetainedInstances>(b"remixapi_UpdateRetainedInstances\0"),
+                lib.get::<DestroyRetainedInstances>(b"remixapi_DestroyRetainedInstances\0"),
+                lib.get::<DrawRetainedInstances>(b"remixapi_DrawRetainedInstances\0"),
+            ) {
+                (Ok(c), Ok(u), Ok(um), Ok(d), Ok(dr)) => Some(RetainedApi { create_many: *c, update: *u, update_many: *um, destroy: *d, draw: *dr }),
+                _ => None,
+            }
+        };
+        Ok(Remix { api, retained, _lib: lib, dll: dll.to_path_buf(), started: false, _not_send: std::marker::PhantomData })
     }
 
     /// Start rendering into `hwnd`.
@@ -487,39 +501,64 @@ impl Remix {
     /// `alpha`: the instance's alpha state, for a material made with
     /// [`MaterialDesc::draw_call_alpha`]: alpha is the texture's times the vertex colour's.
     pub fn draw_instance_skinned(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, bones: &[Transform], alpha: Option<InstanceAlpha>) -> Result<(), Error> {
-        // As New Vegas RTX's vertex_color_blend and alpha_blend [documented: the wrapper's
-        // api_material.cpp]: colour texture x vertex colour; alpha the texture's, times the
-        // vertex colour's when blended or tested; D3D9 blends alpha by the colour factors.
-        let mut blend = alpha.map(|a| InstanceInfoBlendEXT {
-            sType: ST_INSTANCE_INFO_BLEND_EXT,
-            pNext: std::ptr::null_mut(),
-            alphaTestEnabled: u32::from(a.test.is_some()),
-            alphaTestReferenceValue: a.test.unwrap_or(0),
-            alphaTestCompareOp: if a.test.is_some() { VK_COMPARE_GREATER_OR_EQUAL } else { 7 },
-            alphaBlendEnabled: u32::from(a.blend),
-            srcColorBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE }, |f| f.0),
-            dstColorBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 }, |f| f.1),
-            colorBlendOp: 0,
-            textureColorArg1Source: TA_TEXTURE,
-            textureColorArg2Source: TA_VERTEX_COLOR,
-            textureColorOperation: TOP_MODULATE,
-            textureAlphaArg1Source: TA_TEXTURE,
-            textureAlphaArg2Source: TA_VERTEX_COLOR,
-            textureAlphaOperation: if a.blend || a.test.is_some() { TOP_MODULATE } else { TOP_SELECT_ARG1 },
-            tFactor: 0xFFFF_FFFF,
-            isTextureFactorBlend: 0,
-            srcAlphaBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE }, |f| f.0),
-            dstAlphaBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 }, |f| f.1),
-            alphaBlendOp: 0,
-            writeMask: 0xF,
-            isVertexColorBakedLighting: u32::from(a.baked),
-        });
-        let blend_ptr: *mut c_void = blend.as_mut().map_or(std::ptr::null_mut(), |b| (b as *mut InstanceInfoBlendEXT).cast());
-        let mut ext = InstanceInfoBoneTransformsEXT { sType: ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT, pNext: blend_ptr, boneTransforms_values: bones.as_ptr(), boneTransforms_count: bones.len().min(MAX_BONES) as u32 };
-        let next = if bones.is_empty() { blend_ptr } else { (&mut ext as *mut InstanceInfoBoneTransformsEXT).cast() };
-        let info = InstanceInfo { sType: ST_INSTANCE_INFO, pNext: next, categoryFlags: categories, mesh, transform: *transform, doubleSided: u32::from(double_sided) };
-        // SAFETY: checked present in load.
-        check("DrawInstance", unsafe { (self.api.DrawInstance.unwrap_unchecked())(&info) })
+        with_instance(mesh, transform, categories, double_sided, bones, alpha, |info| {
+            // SAFETY: checked present in load.
+            check("DrawInstance", unsafe { (self.api.DrawInstance.unwrap_unchecked())(info) })
+        })
+    }
+
+    /// Whether the runtime has the retained-instance exports.
+    pub fn has_retained(&self) -> bool {
+        self.retained.is_some()
+    }
+
+    /// Register a draw (as [`Remix::draw_instance_skinned`] describes one) that
+    /// [`Remix::draw_retained`] replays every frame until it is destroyed; visible.
+    pub fn create_retained(&self, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, alpha: Option<InstanceAlpha>) -> Result<u64, Error> {
+        let Some(r) = self.retained else { return Err(Error { call: "CreateRetainedInstances", code: -1 }) };
+        let mut h = 0u64;
+        with_instance(mesh, transform, categories, double_sided, &[], alpha, |info| {
+            // SAFETY: one valid description, one handle slot.
+            check("CreateRetainedInstances", unsafe { (r.create_many)(info, 1, &mut h) })
+        })?;
+        Ok(h)
+    }
+
+    /// Replace a retained draw's whole description (mesh, categories, alpha); it keeps its
+    /// visibility.
+    pub fn redescribe_retained(&self, handle: u64, mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, alpha: Option<InstanceAlpha>) -> Result<(), Error> {
+        let Some(r) = self.retained else { return Err(Error { call: "UpdateRetainedInstance", code: -1 }) };
+        with_instance(mesh, transform, categories, double_sided, &[], alpha, |info| {
+            // SAFETY: a handle this runtime made, a valid description.
+            check("UpdateRetainedInstance", unsafe { (r.update)(handle, info) })
+        })
+    }
+
+    /// Moves and shows or hides retained draws, in one call.
+    pub fn update_retained(&self, updates: &[RetainedInstanceUpdate]) -> Result<(), Error> {
+        let Some(r) = self.retained else { return Err(Error { call: "UpdateRetainedInstances", code: -1 }) };
+        for chunk in updates.chunks(4096) {
+            // SAFETY: the slice is valid for the call.
+            check("UpdateRetainedInstances", unsafe { (r.update_many)(chunk.as_ptr(), chunk.len() as u32) })?;
+        }
+        Ok(())
+    }
+
+    /// Remove retained draws (before their meshes go).
+    pub fn destroy_retained(&self, handles: &[u64]) {
+        if let Some(r) = self.retained {
+            for chunk in handles.chunks(4096) {
+                // SAFETY: handles this runtime made.
+                unsafe { (r.destroy)(chunk.as_ptr(), chunk.len() as u32) };
+            }
+        }
+    }
+
+    /// Replay every retained draw this frame (no scene origin).
+    pub fn draw_retained(&self) -> Result<(), Error> {
+        let Some(r) = self.retained else { return Err(Error { call: "DrawRetainedInstances", code: -1 }) };
+        // SAFETY: null asks for no rebase.
+        check("DrawRetainedInstances", unsafe { (r.draw)(std::ptr::null()) })
     }
 
     /// A sphere light (point light of `radius`), radiance per channel.
@@ -600,6 +639,42 @@ impl Drop for Remix {
             unsafe { f() };
         }
     }
+}
+
+/// An instance's description (blend state and bones chained) for the duration of `f`.
+fn with_instance<R>(mesh: MeshHandle, transform: &Transform, categories: u32, double_sided: bool, bones: &[Transform], alpha: Option<InstanceAlpha>, f: impl FnOnce(&InstanceInfo) -> R) -> R {
+        // As New Vegas RTX's vertex_color_blend and alpha_blend [documented: the wrapper's
+        // api_material.cpp]: colour texture x vertex colour; alpha the texture's, times the
+        // vertex colour's when blended or tested; D3D9 blends alpha by the colour factors.
+        let mut blend = alpha.map(|a| InstanceInfoBlendEXT {
+            sType: ST_INSTANCE_INFO_BLEND_EXT,
+            pNext: std::ptr::null_mut(),
+            alphaTestEnabled: u32::from(a.test.is_some()),
+            alphaTestReferenceValue: a.test.unwrap_or(0),
+            alphaTestCompareOp: if a.test.is_some() { VK_COMPARE_GREATER_OR_EQUAL } else { 7 },
+            alphaBlendEnabled: u32::from(a.blend),
+            srcColorBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE }, |f| f.0),
+            dstColorBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 }, |f| f.1),
+            colorBlendOp: 0,
+            textureColorArg1Source: TA_TEXTURE,
+            textureColorArg2Source: TA_VERTEX_COLOR,
+            textureColorOperation: TOP_MODULATE,
+            textureAlphaArg1Source: TA_TEXTURE,
+            textureAlphaArg2Source: TA_VERTEX_COLOR,
+            textureAlphaOperation: if a.blend || a.test.is_some() { TOP_MODULATE } else { TOP_SELECT_ARG1 },
+            tFactor: 0xFFFF_FFFF,
+            isTextureFactorBlend: 0,
+            srcAlphaBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_SRC_ALPHA } else { VK_BLEND_ONE }, |f| f.0),
+            dstAlphaBlendFactor: a.factors.map_or(if a.blend { VK_BLEND_ONE_MINUS_SRC_ALPHA } else { 0 }, |f| f.1),
+            alphaBlendOp: 0,
+            writeMask: 0xF,
+            isVertexColorBakedLighting: u32::from(a.baked),
+        });
+        let blend_ptr: *mut c_void = blend.as_mut().map_or(std::ptr::null_mut(), |b| (b as *mut InstanceInfoBlendEXT).cast());
+        let mut ext = InstanceInfoBoneTransformsEXT { sType: ST_INSTANCE_INFO_BONE_TRANSFORMS_EXT, pNext: blend_ptr, boneTransforms_values: bones.as_ptr(), boneTransforms_count: bones.len().min(MAX_BONES) as u32 };
+        let next = if bones.is_empty() { blend_ptr } else { (&mut ext as *mut InstanceInfoBoneTransformsEXT).cast() };
+        let info = InstanceInfo { sType: ST_INSTANCE_INFO, pNext: next, categoryFlags: categories, mesh, transform: *transform, doubleSided: u32::from(double_sided) };
+    f(&info)
 }
 
 /// A row-major 3x4 transform from a column-major 4x4 (glam's `to_cols_array_2d`).

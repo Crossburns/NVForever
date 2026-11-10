@@ -2038,7 +2038,10 @@ fn unit_lambda(unit: &Compiled, l: &fnv_script::ir::XExpr) -> Option<fnv_script:
 struct LambdaDef<'a> {
     unit: Option<&'a Compiled>,
     key: String,
-    lambda: fnv_script::ir::XExpr,
+    /// Shared: a call runs it without copying its statements [observed 2026-11-10,
+    /// Superluminal: cloning the body on every call was about 1.2 ms a frame of HND's
+    /// main-loop callbacks].
+    lambda: std::sync::Arc<fnv_script::ir::XExpr>,
     inst: Option<InstKey>,
     /// The variables of a maker that has no instance (a function script, a result
     /// script) when the lambda was made: the lambda reads them [observed: jip-events
@@ -2919,15 +2922,18 @@ impl<'a> Game<'a> {
         let data = self.data;
         let opts = self.opts();
         let self_ref = on.and_then(|v| v.as_form()).map(FormId);
-        let (unit, params, body, value, locals): (&Compiled, Vec<VarRef>, Vec<Stmt>, Option<fnv_script::ir::XExpr>, Locals) = if id >= LAMBDA_BASE {
-            let d = self.lambdas.get((id - LAMBDA_BASE) as usize).cloned().ok_or("an unknown lambda")?;
-            let (unit, l, inst) = (d.unit.ok_or_else(|| format!("the lambda's script {} is gone", d.key))?, d.lambda, d.inst);
-            let fnv_script::ir::XExpr::Lambda { params, body, value, .. } = l else { return Err("an unknown lambda".into()) };
-            let locals = match inst {
+        // The lambda's expression, kept alive while its body runs.
+        let shared: Option<std::sync::Arc<fnv_script::ir::XExpr>>;
+        let (unit, params, body, value, locals): (&Compiled, Vec<VarRef>, &[Stmt], Option<&fnv_script::ir::XExpr>, Locals) = if id >= LAMBDA_BASE {
+            let d = self.lambdas.get((id - LAMBDA_BASE) as usize).ok_or("an unknown lambda")?;
+            let unit = d.unit.ok_or_else(|| format!("the lambda's script {} is gone", d.key))?;
+            let locals = match d.inst {
                 Some(k) => Locals::Instance(k),
-                None => Locals::Temp(d.captured.unwrap_or_default()),
+                None => Locals::Temp(d.captured.clone().unwrap_or_default()),
             };
-            (unit, params, body, value.map(|v| *v), locals)
+            shared = Some(d.lambda.clone());
+            let Some(fnv_script::ir::XExpr::Lambda { params, body, value, .. }) = shared.as_deref() else { return Err("an unknown lambda".into()) };
+            (unit, params.clone(), body.as_slice(), value.as_deref(), locals)
         } else {
             let compiled = id.checked_sub(COMPILED_BASE).filter(|_| id < TEMP_REF_BASE).and_then(|i| self.compiled_files.get(i as usize).copied());
             let unit = match compiled {
@@ -2936,7 +2942,7 @@ impl<'a> Game<'a> {
             };
             let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK).ok_or_else(|| format!("{} has no Function block", data.name(FormId(id))))?;
             let params = block.params.iter().flatten().filter_map(|a| if let Arg::Var(v) = a { Some(*v) } else { None }).collect();
-            (unit, params, block.body.clone(), None, Locals::Temp(BTreeMap::new()))
+            (unit, params, block.body.as_slice(), None, Locals::Temp(BTreeMap::new()))
         };
         self.udf.push(UdfFrame { value: None, caller });
         let ctx = RunCtx { self_ref: self_ref.or(ctx.self_ref), ..ctx };
@@ -2951,13 +2957,13 @@ impl<'a> Game<'a> {
         }
         let mut lambda_value = None;
         if result.is_ok() {
-            match &value {
+            match value {
                 Some(v) => match vm.xeval(v) {
                     Ok(x) => lambda_value = Some(x),
                     Err(e) => result = Err(e.to_string()),
                 },
                 None => {
-                    if let Err(e) = vm.run(&body) {
+                    if let Err(e) = vm.run(body) {
                         result = Err(e.to_string());
                     }
                 }
@@ -3118,7 +3124,7 @@ impl<'a> Game<'a> {
         };
         if id >= LAMBDA_BASE {
             let d = self.lambdas.get((id - LAMBDA_BASE) as usize)?;
-            let fnv_script::ir::XExpr::Lambda { params, .. } = &d.lambda else { return None };
+            let fnv_script::ir::XExpr::Lambda { params, .. } = &*d.lambda else { return None };
             return Some(params.len());
         }
         let unit = self.data.script(FormId(id))?;
@@ -5410,7 +5416,7 @@ impl<'a> Game<'a> {
         GameSnapshot {
             format: SNAPSHOT_FORMAT.into(),
             ext: self.ext.clone(),
-            lambdas: self.lambdas.iter().map(|d| SavedLambda { unit: d.key.clone(), lambda: d.lambda.clone(), inst: d.inst }).collect(),
+            lambdas: self.lambdas.iter().map(|d| SavedLambda { unit: d.key.clone(), lambda: (*d.lambda).clone(), inst: d.inst }).collect(),
             // A created reference deleted since keeps no variables: its FormID is not
             // used again, so they could never be read.
             nx: crate::nvse_nx::NxVars(self.nx.0.iter().filter(|(id, _)| !sim.deleted_created.contains_key(id)).map(|(k, v)| (*k, v.clone())).collect()),
@@ -5486,7 +5492,7 @@ impl<'a> Game<'a> {
             if let Some(u) = unit.filter(|u| unit_lambda(u, &l.lambda).is_some_and(|now| now == l.lambda)) {
                 g.lambda_ids.entry(lambda_key(u, &l.lambda, l.inst)).or_insert(LAMBDA_BASE + g.lambdas.len() as u32);
             }
-            g.lambdas.push(LambdaDef { unit, key: l.unit.clone(), lambda: l.lambda.clone(), inst: l.inst, captured: None });
+            g.lambdas.push(LambdaDef { unit, key: l.unit.clone(), lambda: std::sync::Arc::new(l.lambda.clone()), inst: l.inst, captured: None });
         }
         g.nx = s.nx.clone();
         g.quests = s.quests.clone();
@@ -5891,7 +5897,7 @@ impl Host for Exec<'_, '_> {
             Locals::Temp(m) => Some(m.clone()),
             Locals::Instance(_) => None,
         };
-        self.game.lambdas.push(LambdaDef { unit: Some(self.unit), key: self.unit.key(), lambda: l.clone(), inst: key.2, captured });
+        self.game.lambdas.push(LambdaDef { unit: Some(self.unit), key: self.unit.key(), lambda: std::sync::Arc::new(l.clone()), inst: key.2, captured });
         self.game.lambda_ids.insert(key, id);
         Ok(fnv_script::vm::XVal::Ref(id))
     }

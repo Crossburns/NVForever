@@ -195,6 +195,24 @@ scene and under 1 ms in Present, Remix reporting its GPU 60-64 % busy. Bevy's ow
 pass under the Remix window costs 0-4 ms (0 with the sun's shadows off). The stats line
 every 600 frames gives the build and Present times.
 
+[observed: 2026-11-10, same place, 1280x800 window, High preset, DLSS-RR, frame
+generation on; docs/handoff/memory-runs.md] 29.1 -> 40.7 traced frames a second (p50
+34.1 -> 25.1 ms) with the picture unchanged (mean difference 0.8 of 255, path-tracing
+noise):
+- Static shapes are retained instances (`rtx.scene.directRetained`), made once and
+  only moved, shown or hidden; skinned, changing and view-faded shapes and water still
+  go as a DrawInstance a frame (`NVF_REMIX_RETAINED=0`: all of them, as before). The
+  runtime's render thread 17.8 -> 6.3 ms a frame, 4360 -> 223 draws.
+- The UI overlay's readback buffer is taken and recycled (vendor/README.md, bevy_render).
+- Bevy's own main pass under the Remix window is drawn at 64x36 (`NVF_REMIX_BEVY_FULL=1`
+  keeps it whole); its visibility, which picks Remix's shapes, is untouched.
+- Test aids: `NVF_REMIX_SET=key=value;…` sets runtime options for a run (the profiler:
+  `rtx.profile.detailedLogging=True`), `NVF_GPU_REPORT=<s>` logs wgpu's allocations by
+  label, `NVF_GPU_MEMLOG=1` every device-memory block, `--remix off` renders without Remix.
+- Memory: the process's commit includes its VRAM (Windows backs device memory with
+  commit), so Remix's 7.3 GB and Bevy's 3.6 GB count against the machine's commit limit as
+  well as the card's.
+
 ## Not yet
 
 - NVForever's sky meshes (Remix draws its own sky),

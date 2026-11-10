@@ -409,7 +409,10 @@ fn map_buffers(mut readbacks: ResMut<GpuReadbacks>) {
             res.expect("Failed to map buffer");
             let buffer_slice = buffer.slice(..);
             let data = buffer_slice.get_mapped_range().unwrap();
-            let result = Vec::from(&*data);
+            // NVForever readback pool: a buffer handed back by `recycle_readback_data` is
+            // written over instead of a new one allocated each readback.
+            let mut result = take_pooled(data.len());
+            result.extend_from_slice(&data);
             drop(data);
             buffer.unmap();
             if let Err(e) = tx.try_send((entity, buffer, result)) {
@@ -418,6 +421,30 @@ fn map_buffers(mut readbacks: ResMut<GpuReadbacks>) {
         });
         readbacks.mapped.push(readback);
     }
+}
+
+// NVForever readback pool: a whole-window picture read back every frame (14.7 MB at
+// 2560x1440) was a new allocation and a free each frame, page faults included
+// [observed 2026-11-10, Superluminal: about 4 ms a frame]. An observer that takes the
+// data (`On::event_mut`) can hand the buffer back here when done with it.
+static READBACK_POOL: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+
+/// Hand a readback's data back for a later readback of about its size.
+pub fn recycle_readback_data(mut data: Vec<u8>) {
+    if let Ok(mut pool) = READBACK_POOL.lock() {
+        if pool.len() < 4 {
+            data.clear();
+            pool.push(data);
+        }
+    }
+}
+
+fn take_pooled(len: usize) -> Vec<u8> {
+    let pooled = READBACK_POOL.lock().ok().and_then(|mut pool| {
+        let i = pool.iter().position(|v| v.capacity() >= len)?;
+        Some(pool.swap_remove(i))
+    });
+    pooled.unwrap_or_else(|| Vec::with_capacity(len))
 }
 
 // Utils

@@ -22,8 +22,10 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::window::{PrimaryWindow, RawHandleWrapper};
 use nvf_assets::NifMaterial;
 use nvf_remix::ffi::{self, HardcodedVertex};
-use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
+// foldhash, not std's SipHash: the frame looks shapes up by asset id thousands of times
+// [observed 2026-11-10: SipHash about 0.4 s of 19 s on the main thread].
+use bevy::platform::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -56,6 +58,31 @@ impl Plugin for RemixPlugin {
             .init_resource::<LiveTextures>()
             .add_systems(PostUpdate, ((take_new_meshes, take_new_images, take_changed_materials), watch_live_textures).chain().after(AssetEventSystems))
             .add_systems(Last, (frame, shut_down_on_exit).chain());
+        // Bevy's own 3D pass under the Remix window is never seen: its main pass is drawn
+        // at a few pixels (NVF_REMIX_BEVY_FULL=1 keeps it whole). Visibility, which Remix's
+        // scene is chosen by, is Bevy's culling of the camera and is left as it was.
+        if std::env::var_os("NVF_REMIX_BEVY_FULL").is_none() {
+            if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+                render_app.add_systems(
+                    bevy::render::Render,
+                    shrink_hidden_pass.in_set(bevy::render::RenderSystems::PrepareViews).before(bevy::render::view::prepare_view_targets),
+                );
+            }
+        }
+    }
+}
+
+/// The window's 3D views get a main pass of `HIDDEN_PASS` pixels (render world, each frame,
+/// as FSR sets its own [documented: bevy_camera MainPassResolutionOverride]).
+fn shrink_hidden_pass(mut commands: Commands, views: Query<(Entity, &bevy::render::camera::ExtractedCamera, &bevy::render::view::ExtractedView)>) {
+    const HIDDEN_PASS: UVec2 = UVec2::new(64, 36);
+    for (e, cam, view) in &views {
+        if !matches!(cam.target, Some(bevy::camera::NormalizedRenderTarget::Window(_))) {
+            continue;
+        }
+        if view.viewport.z > HIDDEN_PASS.x && view.viewport.w > HIDDEN_PASS.y {
+            commands.entity(e).insert(bevy::camera::MainPassResolutionOverride(HIDDEN_PASS));
+        }
     }
 }
 
@@ -345,13 +372,132 @@ struct RemixState {
     /// Time in `frame` building the scene and in `present`, since the last stats line.
     build_time: std::time::Duration,
     present_time: std::time::Duration,
+    /// Static shapes as retained instances, by entity: registered once, then only moved,
+    /// shown or hidden, and replayed by one DrawRetainedInstances a frame
+    /// (`NVF_REMIX_RETAINED=0`: a DrawInstance each a frame, as before) [observed
+    /// 2026-11-10: about 4300 draws a frame cost the runtime's render thread 14-15 ms a
+    /// frame in Goodsprings, rtx.profile.detailedLogging].
+    retained: HashMap<Entity, Retained>,
+    use_retained: bool,
+    /// Meshes that changed after Remix had them (particles, morphs): drawn each frame.
+    dynamic: HashSet<AssetId<Mesh>>,
+    /// Retained instances made or described again, and moved, since the last stats line.
+    ret_made: u64,
+    ret_moved: u64,
+}
+
+/// One retained instance: what it was last described and placed as.
+struct Retained {
+    handle: u64,
+    mesh: ffi::MeshHandle,
+    categories: u32,
+    two_sided: bool,
+    alpha: Option<nvf_remix::InstanceAlpha>,
+    transform: ffi::Transform,
+    visible: bool,
+    /// The frame it was last drawn in.
+    seen: u64,
+}
+
+/// Retained instances of `mesh` go before it does [documented: remix_c.h, "Destroy a
+/// retained instance before its mesh"].
+fn forget_mesh(st: &mut RemixState, mesh: ffi::MeshHandle) {
+    let gone: Vec<Entity> = st.retained.iter().filter(|(_, r)| r.mesh == mesh).map(|(e, _)| *e).collect();
+    if gone.is_empty() {
+        return;
+    }
+    let handles: Vec<u64> = gone.iter().filter_map(|e| st.retained.remove(e)).map(|r| r.handle).collect();
+    st.remix.destroy_retained(&handles);
+}
+
+/// After the frame's shapes: hide what was not drawn this frame, drop what has not been
+/// drawn for a while, and replay the table.
+fn retained_end_frame(st: &mut RemixState) {
+    const DROP_AFTER: u64 = 600;
+    let frame = st.frames;
+    let mut updates = Vec::new();
+    let mut dropped = Vec::new();
+    for (e, r) in st.retained.iter_mut() {
+        if r.seen == frame {
+            continue;
+        }
+        if frame.saturating_sub(r.seen) > DROP_AFTER {
+            dropped.push(*e);
+        } else if r.visible {
+            r.visible = false;
+            updates.push(ffi::RetainedInstanceUpdate { handle: r.handle, transform: r.transform, flags: ffi::RETAINED_UPDATE_VISIBILITY, visible: 0 });
+        }
+    }
+    if !updates.is_empty() && st.remix.update_retained(&updates).is_err() {
+        st.errors += 1;
+    }
+    if !dropped.is_empty() {
+        let handles: Vec<u64> = dropped.iter().filter_map(|e| st.retained.remove(e)).map(|r| r.handle).collect();
+        st.remix.destroy_retained(&handles);
+    }
+    if !st.retained.is_empty() && st.remix.draw_retained().is_err() {
+        st.errors += 1;
+    }
+}
+
+/// Draw a static shape through its retained instance: made the first time, described
+/// again when its mesh, categories or alpha change, moved when its transform changes,
+/// shown again when it was hidden. Moves and shows are batched into `moves`.
+#[allow(clippy::too_many_arguments)]
+fn draw_retained(st: &mut RemixState, entity: Entity, mesh: ffi::MeshHandle, tr: &ffi::Transform, categories: u32, two_sided: bool, alpha: Option<nvf_remix::InstanceAlpha>, moves: &mut Vec<ffi::RetainedInstanceUpdate>) {
+    let frame = st.frames;
+    if let Some(r) = st.retained.get_mut(&entity) {
+        r.seen = frame;
+        if r.mesh != mesh || r.categories != categories || r.two_sided != two_sided || r.alpha != alpha {
+            if st.remix.redescribe_retained(r.handle, mesh, tr, categories, two_sided, alpha).is_err() {
+                st.errors += 1;
+            }
+            r.mesh = mesh;
+            r.categories = categories;
+            r.two_sided = two_sided;
+            r.alpha = alpha;
+            r.transform = *tr;
+            st.ret_made += 1;
+            if !r.visible {
+                r.visible = true;
+                moves.push(ffi::RetainedInstanceUpdate { handle: r.handle, transform: *tr, flags: ffi::RETAINED_UPDATE_VISIBILITY, visible: 1 });
+            }
+            return;
+        }
+        let mut flags = 0;
+        if r.transform != *tr {
+            r.transform = *tr;
+            flags |= ffi::RETAINED_UPDATE_TRANSFORM;
+            st.ret_moved += 1;
+        }
+        if !r.visible {
+            r.visible = true;
+            flags |= ffi::RETAINED_UPDATE_VISIBILITY;
+        }
+        if flags != 0 {
+            moves.push(ffi::RetainedInstanceUpdate { handle: r.handle, transform: *tr, flags, visible: 1 });
+        }
+        return;
+    }
+    match st.remix.create_retained(mesh, tr, categories, two_sided, alpha) {
+        Ok(handle) => {
+            st.ret_made += 1;
+            st.retained.insert(entity, Retained { handle, mesh, categories, two_sided, alpha, transform: *tr, visible: true, seen: frame });
+        }
+        Err(_) => {
+            st.errors += 1;
+            // Drawn this frame anyway.
+            if st.remix.draw_instance_skinned(mesh, tr, categories, two_sided, &[], alpha).is_err() {
+                st.errors += 1;
+            }
+        }
+    }
 }
 
 fn hash_of<T: Hash>(t: &T) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    t.hash(&mut h);
+    use std::hash::BuildHasher;
     // Never 0 (no key in the API).
-    h.finish() | 1
+    bevy::platform::hash::FixedHasher.hash_one(t) | 1
 }
 
 fn convert_mesh(m: &Mesh) -> Option<CpuMesh> {
@@ -717,6 +863,7 @@ fn frame(
     // new generation's hash (one hash made again after its destroy did not show, as
     // with lights) [observed 2026-11-09: particles kept their first shape].
     let changed: HashSet<AssetId<Mesh>> = std::mem::take(&mut cpu.changed).into_iter().collect();
+    st.dynamic.extend(changed.iter().copied());
     if !changed.is_empty() {
         // The same triangles with new vertices (a particle system's quads, a morph) are
         // refreshed in place; anything else is made again [documented: New Vegas RTX's
@@ -736,6 +883,7 @@ fn frame(
                 remake.insert(k.0);
                 st.mesh_shape.remove(&k);
                 if let Some(h) = st.meshes.remove(&k) {
+                    forget_mesh(st, h);
                     st.remix.destroy_mesh(h);
                 }
             }
@@ -760,6 +908,7 @@ fn frame(
         for k in stale {
             st.mesh_shape.remove(&k);
             if let Some(h) = st.meshes.remove(&k) {
+                forget_mesh(st, h);
                 st.remix.destroy_mesh(h);
             }
         }
@@ -897,6 +1046,7 @@ fn frame(
     let mut unseen_built = 0usize;
     let all = shapes.all();
     terrain_materials(st, &cpu, &all);
+    let mut moves: Vec<ffi::RetainedInstanceUpdate> = Vec::new();
     for ShapeIn { entity, mesh, mat, base, gt, vis, shown, skinned, layers, land, decal, add_whole, nif, .. } in all {
         // As New Vegas RTX: light cards are not in the traced scene; refracting shells only
         // bend what is behind them, which a path tracer has no use for [documented: the
@@ -1067,9 +1217,20 @@ fn frame(
         // edges stood through the loaded land as streaked sheets, observed 2026-11-09].
         let m = if base.depth_bias <= -50.0 { Mat4::from_translation(Vec3::new(0.0, -LOD_SINK, 0.0)) * gt.to_matrix() } else { gt.to_matrix() };
         let tr = nvf_remix::transform_from_cols(m.to_cols_array_2d());
-        if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, if st.terrain.contains_key(&mesh) { None } else { instance_state(base, add_whole, nif.alpha_cut) }).is_err() {
+        let alpha = if st.terrain.contains_key(&mesh) { None } else { instance_state(base, add_whole, nif.alpha_cut) };
+        // Static: no bones, a mesh that has not changed since Remix got it, no view-angle
+        // fade (its vertices follow the eye).
+        if st.use_retained && bones.is_empty() && skinned.is_none() && nif.falloff.is_none() && !st.dynamic.contains(&mesh) {
+            draw_retained(st, entity, handle, &tr, category, two_sided, alpha, &mut moves);
+        } else if st.remix.draw_instance_skinned(handle, &tr, category, two_sided, &bones, alpha).is_err() {
             st.errors += 1;
         }
+    }
+    if !moves.is_empty() && st.remix.update_retained(&moves).is_err() {
+        st.errors += 1;
+    }
+    if st.use_retained {
+        retained_end_frame(st);
     }
 
     // Water: a translucent surface in the water type's colours [design: Remix's own
@@ -1192,7 +1353,7 @@ fn frame(
     if let Some(sky) = lights.sky.as_deref().filter(|s| s.interior.is_none()) {
         sky_drive(st, sky, eye);
     }
-    let gone: Vec<Entity> = st.lights.keys().filter(|e| !seen.contains(e)).copied().collect();
+    let gone: Vec<Entity> = st.lights.keys().filter(|e| !seen.contains(*e)).copied().collect();
     for e in gone {
         if let Some((_, h)) = st.lights.remove(&e) {
             st.remix.destroy_light(h);
@@ -1209,8 +1370,11 @@ fn frame(
     // Every frame, with the last picture read back until a newer one comes (a frame
     // without it showed no HUD: flicker) [observed 2026-11-09].
     if let Some(ui) = &ui {
-        if let Some(px) = ui.pixels.lock().ok().and_then(|mut p| p.take()) {
-            st.ui_last = Some((px, ui.size));
+        if let Some(px) = ui.pixels.lock().ok().and_then(|mut p| p.latest.take()) {
+            // The picture it replaces goes back for a later readback.
+            if let Some((old, _)) = st.ui_last.replace((px, ui.size)) {
+                bevy::render::gpu_readback::recycle_readback_data(old);
+            }
         }
         if let Some((px, (w, h))) = &st.ui_last {
             if (*w, *h) == ui.size && st.remix.draw_overlay(px, *w, *h, 1.0).is_err() {
@@ -1241,7 +1405,9 @@ fn frame(
     if st.frames % 600 == 1 {
         info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}, light cards and refracting shells left out {}, with a view-angle falloff {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3], st.why[4], st.why[5]);
         let n = 600.0;
-        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed);
+        info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place; {} retained instances, {} made or described again, {} moved", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed, st.retained.len(), st.ret_made, st.ret_moved);
+        st.ret_made = 0;
+        st.ret_moved = 0;
         st.remade = 0;
         st.refreshed = 0;
         st.build_time = Default::default();
@@ -1690,6 +1856,26 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
             warn!("remix: {k}: {e}");
         }
     }
+    // Test aid: `NVF_REMIX_SET=key=value;key=value` sets runtime options for one run (the
+    // profiler: rtx.profile.detailedLogging=True), leaving every config file alone.
+    if let Ok(list) = std::env::var("NVF_REMIX_SET") {
+        for (k, v) in list.split(';').filter_map(|kv| kv.split_once('=')) {
+            match remix.set_config(k.trim(), v.trim()) {
+                Ok(()) => info!("remix: {} = {} (NVF_REMIX_SET)", k.trim(), v.trim()),
+                Err(e) => warn!("remix: {k}: {e}"),
+            }
+        }
+    }
+    // Static shapes go as retained instances when the runtime has them, owned by its scene
+    // directly (built once, moved and shown in place) [documented: the runtime's
+    // rtx_scene_interface.h, rtx.scene.directRetained, off by default for API hosts].
+    let use_retained = remix.has_retained() && std::env::var("NVF_REMIX_RETAINED").map_or(true, |v| v != "0");
+    if use_retained {
+        if let Err(e) = remix.set_config("rtx.scene.directRetained", "True") {
+            warn!("remix: rtx.scene.directRetained: {e}");
+        }
+    }
+    info!("remix: retained instances {}", if use_retained { "on" } else if remix.has_retained() { "off (NVF_REMIX_RETAINED=0)" } else { "off (the runtime has none)" });
     let scale = |k: &str, d: f32| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     info!("remix: started {} in the window", config.dll.display());
     Ok(RemixState {
@@ -1735,6 +1921,11 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         hidden: HashSet::new(),
         build_time: Default::default(),
         present_time: Default::default(),
+        retained: HashMap::new(),
+        use_retained,
+        dynamic: HashSet::new(),
+        ret_made: 0,
+        ret_moved: 0,
     })
 }
 
@@ -1875,16 +2066,26 @@ fn shut_down_on_exit(mut exit: MessageReader<AppExit>, cell: Option<NonSendMut<R
 /// The HUD and menus, drawn by Bevy into an image instead of the window (Remix covers
 /// the window) and read back each frame for Remix's screen overlay: a 2D camera that is
 /// the default UI camera, with a transparent background.
+/// The UI overlay's latest read-back picture. A whole-window picture every frame (14.7 MB
+/// at 2560x1440), copied and allocated anew, cost about 4 ms a frame in copies, page faults
+/// and frees [observed 2026-11-10, Superluminal: sync_readbacks 2.3 s and
+/// NtFreeVirtualMemory 1.1 s of 19 s]: the readback's own buffer is taken, and buffers
+/// done with go back to bevy_render's readback pool (vendor/README.md).
+#[derive(Default)]
+struct PixelSink {
+    latest: Option<Vec<u8>>,
+}
+
 #[derive(Resource)]
 struct UiOverlay {
     image: AssetId<Image>,
     size: (u32, u32),
-    pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    pixels: Arc<std::sync::Mutex<PixelSink>>,
     readback: Entity,
 }
 
 /// The overlay's readback of `image` at `w`×`h` into `sink`.
-fn spawn_ui_readback(commands: &mut Commands, image: Handle<Image>, w: u32, h: u32, sink: Arc<std::sync::Mutex<Option<Vec<u8>>>>) -> Entity {
+fn spawn_ui_readback(commands: &mut Commands, image: Handle<Image>, w: u32, h: u32, sink: Arc<std::sync::Mutex<PixelSink>>) -> Entity {
     use bevy::render::gpu_readback::{Readback, ReadbackComplete};
     // Rows come back padded to 256 bytes [documented: wgpu COPY_BYTES_PER_ROW_ALIGNMENT,
     // bevy_render gpu_readback get_aligned_size].
@@ -1892,15 +2093,23 @@ fn spawn_ui_readback(commands: &mut Commands, image: Handle<Image>, w: u32, h: u
     let stride = row.div_ceil(256) * 256;
     commands
         .spawn(Readback::texture(image))
-        .observe(move |ev: On<ReadbackComplete>| {
-            let data = &ev.data;
+        .observe(move |mut ev: On<ReadbackComplete>| {
+            let len = ev.data.len();
             // A frame read before a resize has the old size: dropped.
-            if data.len() < stride * (h as usize - 1) + row || data.len() > stride * h as usize {
+            if len < stride * (h as usize - 1) + row || len > stride * h as usize {
                 return;
             }
-            let out = if stride == row { data[..row * h as usize].to_vec() } else { data.chunks(stride).take(h as usize).flat_map(|r| r[..row.min(r.len())].iter().copied()).collect() };
-            if let Ok(mut p) = sink.lock() {
-                *p = Some(out);
+            let mut data = std::mem::take(&mut ev.event_mut().data);
+            // Rows padded to the copy alignment are packed in place.
+            if stride != row {
+                for y in 1..h as usize {
+                    data.copy_within(y * stride..y * stride + row, y * row);
+                }
+            }
+            data.truncate(row * h as usize);
+            let Ok(mut p) = sink.lock() else { return };
+            if let Some(old) = p.latest.replace(data) {
+                bevy::render::gpu_readback::recycle_readback_data(old);
             }
         })
         .id()
@@ -1920,7 +2129,7 @@ fn resize_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, 
     }
     commands.entity(ui.readback).despawn();
     if let Ok(mut p) = ui.pixels.lock() {
-        *p = None;
+        *p = PixelSink::default();
     }
     ui.readback = spawn_ui_readback(&mut commands, handle, w, h, ui.pixels.clone());
     info!("remix: UI overlay {}x{} -> {w}x{h}", ui.size.0, ui.size.1);
@@ -1944,7 +2153,7 @@ fn setup_ui_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>, w
         IsDefaultUiCamera,
         Msaa::Off,
     ));
-    let pixels: Arc<std::sync::Mutex<Option<Vec<u8>>>> = Arc::default();
+    let pixels: Arc<std::sync::Mutex<PixelSink>> = Arc::default();
     let readback = spawn_ui_readback(&mut commands, image, w, h, pixels.clone());
     commands.insert_resource(UiOverlay { image: image_id, size: (w, h), pixels, readback });
 }

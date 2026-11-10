@@ -26,6 +26,7 @@ macro_rules! eprintln {
 mod activators;
 #[cfg(windows)]
 mod remix;
+mod gpu_report;
 mod nif_mirror;
 mod anim_paths;
 mod actor_feet;
@@ -1494,12 +1495,17 @@ fn main() -> AppExit {
     }
     #[cfg(windows)]
     // `--remix`, else `[Render] Remix=<Remix install>\trex\d3d9.dll` of NVForever.ini
-    // (docs/design/remix.md).
-    let remix_dll = args.remix.clone().or_else(|| {
+    // (docs/design/remix.md); `--remix off` (NVF_REMIX=off) renders without it.
+    let remix_off = args.remix.as_ref().is_some_and(|p| p.as_os_str().eq_ignore_ascii_case("off"));
+    let remix_dll = if remix_off { None } else { args.remix.clone() }.or_else(|| {
+        if remix_off {
+            return None;
+        }
         let ini = fnv_install::EngineHome::user()?.config_file();
         let text = std::fs::read_to_string(ini).ok()?;
         fnv_install::ini_get(&text, "Render", "Remix").map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_file())
     });
+    app.add_plugins(gpu_report::GpuReportPlugin);
     if let Some(dll) = remix_dll {
         let game_dir = args.data.as_ref().and_then(|d| d.parent()).map(std::path::Path::to_path_buf);
         app.add_plugins(remix::RemixPlugin(remix::RemixConfig { dll, game_dir }));
