@@ -106,6 +106,8 @@ struct CpuMeshes {
     /// Images this adapter just cut down (one Modified event of its own each, skipped);
     /// a later change of the image is a real one and goes to Remix again.
     own_change: HashSet<AssetId<Image>>,
+    /// Meshes this adapter just emptied (`take_new_meshes`), their own Modified skipped.
+    own_mesh_change: HashSet<AssetId<Mesh>>,
 }
 
 /// A mesh's triangles, and for a skinned one four joint weights and indices a vertex.
@@ -571,11 +573,29 @@ fn take_changed_materials(mut ev: MessageReader<AssetEvent<NifMaterial>>, mut cp
     }
 }
 
-fn take_new_meshes(mut ev: MessageReader<AssetEvent<Mesh>>, meshes: Res<Assets<Mesh>>, mut cpu: ResMut<CpuMeshes>) {
+fn take_new_meshes(mut ev: MessageReader<AssetEvent<Mesh>>, mut meshes: ResMut<Assets<Mesh>>, mut cpu: ResMut<CpuMeshes>) {
+    static KEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let keep_bevy = *KEEP.get_or_init(|| std::env::var_os("NVF_REMIX_KEEP_BEVY_MESHES").is_some());
+    let mut emptied = Vec::new();
     for e in ev.read() {
         match e {
             AssetEvent::Added { id } | AssetEvent::Modified { id } => {
-                if let Some(c) = meshes.get(*id).and_then(convert_mesh) {
+                if cpu.own_mesh_change.remove(id) {
+                    continue;
+                }
+                let Some(m) = meshes.get(*id) else { continue };
+                // Bevy's own copy is drawn only by its pass under the Remix window: a mesh
+                // only the render world would hold (no main-world reader can have it), not
+                // skinned, keeps its bounds (`final_aabb`, which Bevy's culling, and so
+                // the shapes Remix gets, use) and loses its vertices, so it is never
+                // uploaded [observed 2026-11-10: wgpu's mesh slabs 1.35 GB under Remix,
+                // the same geometry Remix and this adapter hold]. NVF_REMIX_KEEP_BEVY_MESHES
+                // keeps them.
+                let empty = !keep_bevy && m.asset_usage == bevy::asset::RenderAssetUsages::RENDER_WORLD && m.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_none();
+                if let Some(c) = convert_mesh(m) {
+                    if empty {
+                        emptied.push((*id, m.primitive_topology(), m.final_aabb.or_else(|| bounds_of(&c))));
+                    }
                     if cpu.by_id.insert(*id, Arc::new(c)).is_some() {
                         cpu.changed.push(*id);
                     }
@@ -583,10 +603,28 @@ fn take_new_meshes(mut ev: MessageReader<AssetEvent<Mesh>>, meshes: Res<Assets<M
             }
             AssetEvent::Removed { id } | AssetEvent::Unused { id } => {
                 cpu.by_id.remove(id);
+                cpu.own_mesh_change.remove(id);
             }
             _ => {}
         }
     }
+    for (id, topology, aabb) in emptied {
+        let Some(aabb) = aabb else { continue };
+        if let Some(mut m) = meshes.get_mut(id) {
+            let mut shell = Mesh::new(topology, bevy::asset::RenderAssetUsages::MAIN_WORLD);
+            shell.final_aabb = Some(aabb);
+            *m = shell;
+            cpu.own_mesh_change.insert(id);
+        }
+    }
+}
+
+/// The box around a mesh's vertices, as Bevy keeps it for culling.
+fn bounds_of(c: &CpuMesh) -> Option<bevy::shape::Aabb3d> {
+    let mut it = c.verts.iter().map(|v| Vec3::from(v.position));
+    let first = it.next()?;
+    let (lo, hi) = it.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
+    Some(bevy::shape::Aabb3d { min: lo.into(), max: hi.into() })
 }
 
 /// A Bevy texture format as Remix takes it: (format, Vulkan format override).

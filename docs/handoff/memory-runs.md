@@ -99,3 +99,15 @@ every frame), nif_mirror 1.3 s. Memory is unchanged by these (18.7 GB private at
 
 Not a clean measure: `--no-sun-shadows` changes what goes to Remix (3947 instances: the
 shadow-only shapes are chosen by layer), so it is not a way to time Bevy's shadows.
+
+## 2026-11-10 11:2x, mesh shells under Remix (run ab_ret5)
+
+Under Remix a mesh that only the render world holds (usage RENDER_WORLD, not skinned) keeps
+its bounds (`final_aabb`) and loses its vertices once NVForever's Remix adapter has its
+copy, so Bevy never uploads it (`NVF_REMIX_KEEP_BEVY_MESHES=1` keeps them).
+- private 18.7 -> 16.9 GB, VRAM (whole card) 12.77 -> 11.02 GB, commit free 8.8 -> 10.6 GB.
+- wgpu: 2180 -> 841 MiB allocated, 3446 -> 1408 MiB in blocks (14 -> 8).
+- 41.1 fps (p50 23.9 ms); Remix GPU 21.8 -> 17.5 ms a frame (busy 72 %): the GPU no longer
+  draws Bevy's copy of the world.
+- Same scene (4435 instances, 4451 visible shapes); screenshot mean difference 0.82/255
+  against ab_ret0, the remaining spots a bighorner that walked and the sky.
