@@ -25,6 +25,8 @@ pub fn add_dll_dir(dir: &Path) {
 static SINK: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 /// The game window's own procedure, called after ours.
 static GAME_PROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+/// winit's raw input window's own procedure, called after ours.
+static RAW_PROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 /// The runtime's menu is open (Alt+X toggles it) [documented: the runtime's
 /// rtx_options.h remixMenuKeyBinds, default Alt+X].
 static MENU_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -34,9 +36,10 @@ pub fn menu_open() -> bool {
     MENU_OPEN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The game window's procedure while its raw input is shared: every WM_INPUT goes to the
-/// runtime's menu window first, then to the game's own handler; Alt+X flips the menu flag.
-unsafe extern "system" fn share_proc(h: HWND, m: u32, w: usize, l: isize) -> isize {
+/// winit's raw input window's procedure while raw input is shared: every WM_INPUT goes to
+/// the runtime's menu window first, then (menu closed) to winit, which turns mouse motion into
+/// the game's mouse look; Alt+X flips the menu flag.
+unsafe extern "system" fn raw_proc(h: HWND, m: u32, w: usize, l: isize) -> isize {
     use std::sync::atomic::Ordering;
     use windows_sys::Win32::UI::Input::{GetRawInputData, RAWINPUT, RAWINPUTHEADER, RID_INPUT, RIM_TYPEKEYBOARD};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_MENU};
@@ -66,11 +69,23 @@ unsafe extern "system" fn share_proc(h: HWND, m: u32, w: usize, l: isize) -> isi
             }
         }
     }
-    // While the menu is open it has the keyboard and mouse to itself: input messages skip the
-    // game's handler and get Windows' default handling (Alt+F4 still closes the window), so a
-    // click in the menu is not also a shot in the game.
-    if MENU_OPEN.load(Ordering::Relaxed) && is_input(m) {
+    if m == WM_INPUT && MENU_OPEN.load(Ordering::Relaxed) {
         use windows_sys::Win32::UI::WindowsAndMessaging::DefWindowProcW;
+        // SAFETY: the default procedure frees the raw input.
+        return unsafe { DefWindowProcW(h, m, w, l) };
+    }
+    let prev = RAW_PROC.load(Ordering::Relaxed);
+    // SAFETY: the procedure this replaced, for every message.
+    unsafe { CallWindowProcW(std::mem::transmute::<isize, windows_sys::Win32::UI::WindowsAndMessaging::WNDPROC>(prev), h, m, w, l) }
+}
+
+/// The game window's procedure while the menu shares the input: with the menu open,
+/// keyboard and mouse messages skip the game's handler and get Windows' default handling
+/// (Alt+F4 still closes the window), so a click in the menu is not also a shot in the game.
+unsafe extern "system" fn share_proc(h: HWND, m: u32, w: usize, l: isize) -> isize {
+    use std::sync::atomic::Ordering;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CallWindowProcW, DefWindowProcW};
+    if MENU_OPEN.load(Ordering::Relaxed) && is_input(m) {
         // SAFETY: the default procedure for this window's message.
         return unsafe { DefWindowProcW(h, m, w, l) };
     }
@@ -171,13 +186,33 @@ impl Child {
                     break;
                 }
             }
+            // winit's own raw input window, where its mouse motion (the game's mouse look)
+            // comes from: raw input stays registered to it, as winit registered it, and is
+            // passed on to the menu from there. Registered to the game window instead, winit
+            // never saw mouse motion and the mouse could not turn the camera [observed
+            // 2026-11-10].
+            let raw_class = super::wide("Winit Thread Event Target");
+            let mut raw: HWND = std::ptr::null_mut();
+            loop {
+                raw = FindWindowExW(std::ptr::null_mut(), raw, raw_class.as_ptr(), std::ptr::null());
+                if raw.is_null() {
+                    return false;
+                }
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(raw, &mut pid);
+                if pid == me {
+                    break;
+                }
+            }
             let devices = [
-                RAWINPUTDEVICE { usUsagePage: 1, usUsage: 2, dwFlags: RIDEV_INPUTSINK, hwndTarget: self.parent },
-                RAWINPUTDEVICE { usUsagePage: 1, usUsage: 6, dwFlags: RIDEV_INPUTSINK, hwndTarget: self.parent },
+                RAWINPUTDEVICE { usUsagePage: 1, usUsage: 2, dwFlags: RIDEV_INPUTSINK, hwndTarget: raw },
+                RAWINPUTDEVICE { usUsagePage: 1, usUsage: 6, dwFlags: RIDEV_INPUTSINK, hwndTarget: raw },
             ];
             if RegisterRawInputDevices(devices.as_ptr(), 2, std::mem::size_of::<RAWINPUTDEVICE>() as u32) == 0 {
                 return false;
             }
+            let prev = SetWindowLongPtrW(raw, GWLP_WNDPROC, raw_proc as *const () as usize as isize);
+            RAW_PROC.store(prev, Ordering::Relaxed);
             let prev = SetWindowLongPtrW(self.parent, GWLP_WNDPROC, share_proc as *const () as usize as isize);
             GAME_PROC.store(prev, Ordering::Relaxed);
             SINK.store(sink as isize, Ordering::Relaxed);
