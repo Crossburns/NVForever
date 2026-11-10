@@ -114,6 +114,11 @@ struct CpuMeshes {
     own_change: HashSet<AssetId<Image>>,
     /// Meshes this adapter just emptied (`take_new_meshes`), their own Modified skipped.
     own_mesh_change: HashSet<AssetId<Mesh>>,
+    /// Meshes, images and NIF materials the game let go (Removed or Unused): their Remix
+    /// counterparts go too (`release_gone`).
+    gone_meshes: Vec<AssetId<Mesh>>,
+    gone_images: Vec<AssetId<Image>>,
+    gone_materials: Vec<UntypedAssetId>,
 }
 
 /// A vertex as kept between frames: Remix's vertex without its 28 bytes of padding, widened
@@ -425,6 +430,10 @@ struct RemixState {
     /// under the image's own hash [observed 2026-11-10: 103 textures, 366 MB, in
     /// Goodsprings: clamped copies and second handles of one file].
     alias: HashMap<u64, u64>,
+    /// Textures whose image is gone but which images of the same contents still share.
+    orphans: HashSet<u64>,
+    /// What `release_gone` freed since the last stats line: meshes, materials, textures.
+    released: [u64; 3],
 }
 
 /// The texture Remix has for the image of hash `h`: its own, or the one of the same
@@ -444,6 +453,79 @@ struct Retained {
     visible: bool,
     /// The frame it was last drawn in.
     seen: u64,
+}
+
+/// What the game let go leaves Remix too, in the order the runtime needs: retained
+/// instances, then meshes, then materials, then textures. A loaded asset is a new asset id,
+/// so nothing freed here is asked for again [observed 2026-11-10: nothing was freed; eight
+/// jumps across the map in four minutes took private memory 14.5 -> 22.7 GB and the card
+/// 9.0 -> 14.4 GB, Remix meshes 1588 -> 5276, textures 1664 -> 4523].
+fn release_gone(st: &mut RemixState, cpu: &mut CpuMeshes) {
+    let gone_meshes: HashSet<AssetId<Mesh>> = std::mem::take(&mut cpu.gone_meshes).into_iter().collect();
+    let gone_mats: HashSet<UntypedAssetId> = std::mem::take(&mut cpu.gone_materials).into_iter().collect();
+    let gone_images = std::mem::take(&mut cpu.gone_images);
+    if !gone_meshes.is_empty() || !gone_mats.is_empty() {
+        let keys: Vec<_> = st.meshes.keys().filter(|k| gone_meshes.contains(&k.0) || gone_mats.contains(&k.1)).copied().collect();
+        for k in keys {
+            if let Some(h) = st.meshes.remove(&k) {
+                forget_mesh(st, h);
+                st.remix.destroy_mesh(h);
+                st.released[0] += 1;
+            }
+            st.mesh_shape.remove(&k);
+            st.falloff_eye.remove(&k);
+            st.hidden.remove(&k);
+        }
+        for m in &gone_meshes {
+            if let Some(h) = st.terrain.remove(m) {
+                forget_mesh(st, h);
+                st.remix.destroy_mesh(h);
+                st.released[0] += 1;
+            }
+            st.layered.remove(m);
+            st.mesh_gen.remove(m);
+            st.dynamic.remove(m);
+        }
+        for m in &gone_mats {
+            if let Some(h) = st.materials.remove(m) {
+                st.remix.destroy_material(h);
+                st.released[1] += 1;
+            }
+            st.mat_gen.remove(m);
+            st.material_wait.remove(m);
+        }
+    }
+    for id in gone_images {
+        let h = hash_of(&id);
+        st.queued.remove(&h);
+        st.upload_queue.retain(|(i, _)| *i != id);
+        st.mat_missing.remove(&h);
+        st.failed_textures.remove(&h);
+        st.wrap.remove(&h);
+        st.d3d9.remove(&h);
+        if !st.textures.remove(&h) {
+            continue;
+        }
+        // A duplicate never uploaded its own: the texture it shared may go now.
+        if let Some(first) = st.alias.remove(&h) {
+            if st.orphans.contains(&first) && !st.alias.values().any(|&f| f == first) {
+                st.orphans.remove(&first);
+                destroy_texture(st, first);
+            }
+            continue;
+        }
+        if st.alias.values().any(|&f| f == h) {
+            st.orphans.insert(h);
+            continue;
+        }
+        destroy_texture(st, h);
+    }
+}
+
+fn destroy_texture(st: &mut RemixState, h: u64) {
+    st.remix.destroy_texture(h as ffi::TextureHandle);
+    st.contents.retain(|_, v| *v != h);
+    st.released[2] += 1;
 }
 
 /// Retained instances of `mesh` go before it does [documented: remix_c.h, "Destroy a
@@ -611,8 +693,10 @@ fn convert_mesh(m: &Mesh) -> Option<CpuMesh> {
 /// follow the hour) [observed 2026-11-09: lit windows at 10:00 under Remix].
 fn take_changed_materials(mut ev: MessageReader<AssetEvent<NifMaterial>>, mut cpu: ResMut<CpuMeshes>) {
     for e in ev.read() {
-        if let AssetEvent::Modified { id } = e {
-            cpu.changed_materials.push(id.untyped());
+        match e {
+            AssetEvent::Modified { id } => cpu.changed_materials.push(id.untyped()),
+            AssetEvent::Removed { id } | AssetEvent::Unused { id } => cpu.gone_materials.push(id.untyped()),
+            _ => {}
         }
     }
 }
@@ -648,6 +732,7 @@ fn take_new_meshes(mut ev: MessageReader<AssetEvent<Mesh>>, mut meshes: ResMut<A
             AssetEvent::Removed { id } | AssetEvent::Unused { id } => {
                 cpu.by_id.remove(id);
                 cpu.own_mesh_change.remove(id);
+                cpu.gone_meshes.push(*id);
             }
             _ => {}
         }
@@ -699,6 +784,7 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, mut images: ResMut<
         if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = e {
             cpu.shrunk.remove(id);
             cpu.own_change.remove(id);
+            cpu.gone_images.push(*id);
         }
         let (AssetEvent::Added { id } | AssetEvent::Modified { id }) = e else { continue };
         // The change is this system's own (the image cut down below); any later one is
@@ -996,6 +1082,7 @@ fn frame(
         }
         st.remade += changed_mats.len() as u64;
     }
+    release_gone(st, &mut cpu);
     for id in std::mem::take(&mut cpu.skipped_images) {
         st.failed_textures.insert(hash_of(&id));
     }
@@ -1506,7 +1593,8 @@ fn frame(
     if st.frames % 600 == 1 {
         info!("remix: frame {}, {} textures, {} materials, {} meshes, {} lights, {} errors; visible shapes {}, without a CPU mesh {}, without a material {}, waiting for textures {}, light cards and refracting shells left out {}, with a view-angle falloff {}", st.frames, st.textures.len(), st.materials.len(), st.meshes.len(), st.lights.len(), st.errors, st.why[0], st.why[1], st.why[2], st.why[3], st.why[4], st.why[5]);
         let n = 600.0;
-        info!("remix: textures sharing the texture of the same contents: {} ({:.0} MB not uploaded)", st.same_count, st.same_bytes as f64 / 1e6);
+        info!("remix: textures sharing the texture of the same contents: {} ({:.0} MB not uploaded); let go with their assets since the last line: {} meshes, {} materials, {} textures", st.same_count, st.same_bytes as f64 / 1e6, st.released[0], st.released[1], st.released[2]);
+        st.released = [0; 3];
         info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place; {} retained instances, {} made or described again, {} moved", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed, st.retained.len(), st.ret_made, st.ret_moved);
         st.ret_made = 0;
         st.ret_moved = 0;
@@ -2032,6 +2120,8 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         same_bytes: 0,
         same_count: 0,
         alias: HashMap::new(),
+        orphans: HashSet::new(),
+        released: [0; 3],
     })
 }
 

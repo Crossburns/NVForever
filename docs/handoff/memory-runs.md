@@ -159,3 +159,21 @@ Totals since the morning (Remix on, same place): private 18.7 -> 16.1 GB, VRAM (
 
 Totals since the morning (Remix on, Goodsprings 14:00): 29.1 -> 50.7 traced frames a second
 (p50 34.1 -> 19.4 ms), private memory 18.7 -> 16.1 GB, VRAM 12.77 -> 10.72 GB.
+
+## 2026-11-10 14:2x-14:50, the travel leak (runs tele0, tele1, ab_ret15)
+
+Eight `player.setpos` jumps across WastelandNV, 20 s apart
+(`NVF_PLAY_TEST_CONSOLE=50:player.setpos x -40000;70:…`), memwatch every 5 s.
+- tele0, before: nothing NVForever gave Remix was ever destroyed. Private 14.5 -> 22.7 GB,
+  VRAM 9.0 -> 14.4 GB, commit free 12.9 -> 5.3 GB; Remix meshes 1588 -> 5276, textures
+  1664 -> 4523, materials 1347 -> 3026, still climbing at the end. This is the growth that
+  ends in failed allocations in long sessions.
+- Fix: a mesh, image or NIF material the game lets go (AssetEvent Removed/Unused) leaves
+  Remix too (retained instances, then meshes, then materials, then textures; a texture
+  other images of the same contents share stays until the last of them goes).
+- tele1, after: Remix meshes peak 2334 and come back to 2018, textures 2360 at the end;
+  up to 921 meshes, 598 materials and 1434 textures freed in one 600-frame window.
+  Private ends at 18.7 GB and falling (peak 20.1), VRAM 12.1 GB. What stays is the
+  engine's own cache keep times (nvf_assets release.rs), not Remix.
+- ab_ret15 (Goodsprings, no travel): 50.7 fps, private 15.98 GB, VRAM 10.61 GB, picture
+  mean difference 0.85/255.
