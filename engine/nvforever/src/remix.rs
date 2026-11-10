@@ -221,6 +221,8 @@ struct PendingImage {
     wrap: [u8; 2],
     /// New pixels of an image Remix may have already: replaced in place.
     modified: bool,
+    /// The texture cache's folder of it (`textures\<folder>`), for the upload census.
+    folder: String,
 }
 
 /// An image's addressing as Remix's wrap modes (0 clamp, 1 repeat, 2 mirrored, 3 clip): the
@@ -432,6 +434,8 @@ struct RemixState {
     alias: HashMap<u64, u64>,
     /// Textures whose image is gone but which images of the same contents still share.
     orphans: HashSet<u64>,
+    /// Bytes uploaded by texture folder (NVF_REMIX_MEMLOG census).
+    by_folder: HashMap<String, (u64, u32)>,
     /// What `release_gone` freed since the last stats line: meshes, materials, textures.
     released: [u64; 3],
 }
@@ -863,7 +867,8 @@ fn take_new_images(mut ev: MessageReader<AssetEvent<Image>>, mut images: ResMut<
         let normal = !format.is_srgb() && name.as_deref().is_none_or(|n| n.ends_with("_n.dds") || n.ends_with("_n.png"));
         let d3d9 = d3d9_hash(format, width, height, &data);
         let wrap = remix_wrap(&img.sampler);
-        cpu.pending_images.push((*id, Arc::new(PendingImage { width, height, mips, format, data, normal, d3d9, wrap, modified })));
+        let folder = name.as_deref().map(|n| n.split(['\\', '/']).take(2).collect::<Vec<_>>().join("\\")).unwrap_or_else(|| "(unnamed)".into());
+        cpu.pending_images.push((*id, Arc::new(PendingImage { width, height, mips, format, data, normal, d3d9, wrap, modified, folder })));
     }
 }
 
@@ -1142,6 +1147,9 @@ fn frame(
         }
         match st.remix.create_texture(&t) {
             Ok(_) => {
+                let e = st.by_folder.entry(img.folder.clone()).or_default();
+                e.0 += img.data.len() as u64;
+                e.1 += 1;
                 st.textures.insert(hash);
                 st.failed_textures.remove(&hash);
                 // Materials made without this texture (it came after they gave up on it)
@@ -1595,6 +1603,12 @@ fn frame(
         let n = 600.0;
         info!("remix: textures sharing the texture of the same contents: {} ({:.0} MB not uploaded); let go with their assets since the last line: {} meshes, {} materials, {} textures", st.same_count, st.same_bytes as f64 / 1e6, st.released[0], st.released[1], st.released[2]);
         st.released = [0; 3];
+        if std::env::var_os("NVF_REMIX_MEMLOG").is_some() {
+            let mut rows: Vec<_> = st.by_folder.iter().collect();
+            rows.sort_by_key(|r| std::cmp::Reverse(r.1 .0));
+            let top: Vec<String> = rows.iter().take(12).map(|(f, (b, n))| format!("{f} {:.0} MB/{n}", *b as f64 / 1e6)).collect();
+            info!("remix: textures uploaded by folder (all time): {}", top.join(", "));
+        }
         info!("remix: {:.2} ms a frame building the scene, {:.2} ms in present, {} changed meshes made again, {} refreshed in place; {} retained instances, {} made or described again, {} moved", st.build_time.as_secs_f64() * 1000.0 / n, st.present_time.as_secs_f64() * 1000.0 / n, st.remade, st.refreshed, st.retained.len(), st.ret_made, st.ret_moved);
         st.ret_made = 0;
         st.ret_moved = 0;
@@ -2121,6 +2135,7 @@ fn start(config: &RemixConfig, parent: *mut std::ffi::c_void) -> Result<RemixSta
         same_count: 0,
         alias: HashMap::new(),
         orphans: HashSet::new(),
+        by_folder: HashMap::new(),
         released: [0; 3],
     })
 }

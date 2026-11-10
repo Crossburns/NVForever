@@ -45,6 +45,12 @@ pub const GPU_PRESSURE: (f64, f64) = (0.85, 0.75);
 /// the game's own commit (about 5 GB in a soak) on an 8 GB machine leaves about a quarter
 /// free, which is not pressed].
 pub const RAM_PRESSURE: (f64, f64) = (0.90, 0.80);
+/// A share of the machine's commit limit (RAM plus page file) in use: over `.0` presses the
+/// caches, under `.1` lets go [design: an allocation fails when commit runs out, whatever
+/// RAM is free; the process's VRAM counts against it too (docs/handoff/memory-runs.md); on
+/// the owner's 45 GB limit 0.85 is under 6.8 GB free, where a long session with Remix hung,
+/// observed 2026-11-09/10].
+pub const COMMIT_PRESSURE: (f64, f64) = (0.85, 0.75);
 /// The keep limits while pressed: the least the budgets scale to [design: 10 s and 32
 /// entries were tried first; on a tour slice capped at a 2 GB card they pressed at 77 s
 /// and never let go (the allocator keeps emptied blocks, #898, so dropping assets does not
@@ -159,6 +165,20 @@ fn read_ram() -> Option<(u64, u64)> {
     None
 }
 
+/// The machine's commit limit and what of it is free, MB.
+#[cfg(windows)]
+fn read_commit() -> Option<(u64, u64)> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..unsafe { std::mem::zeroed() } };
+    // SAFETY: `m` is a MEMORYSTATUSEX with its length set, as the call asks.
+    (unsafe { GlobalMemoryStatusEx(&mut m) } != 0 && m.ullTotalPageFile > 0).then_some((m.ullTotalPageFile / MB, m.ullAvailPageFile / MB))
+}
+
+#[cfg(not(windows))]
+fn read_commit() -> Option<(u64, u64)> {
+    None
+}
+
 /// The RAM's share in use, a test aid's cap taken as RAM the machine does not have.
 fn ram_share(ram: (u64, u64), aid: Option<u64>) -> f64 {
     let (total, free) = ram;
@@ -258,6 +278,10 @@ fn watch_use(
     if let Some(r) = ram {
         shares.push((ram_share(r, budget.aid_ram), RAM_PRESSURE));
     }
+    let commit = read_commit();
+    if let Some((total, free)) = commit {
+        shares.push((1.0 - free as f64 / total.max(1) as f64, COMMIT_PRESSURE));
+    }
     let now_pressed = pressed(budget.pressed, &shares);
     if now_pressed == budget.pressed {
         return;
@@ -266,8 +290,9 @@ fn watch_use(
     *limits = if now_pressed { PRESSED } else { budget.base };
     let gpu_text = gpu.map_or("?".to_string(), |(b, used)| format!("{used} of {b} MB"));
     let ram_text = ram.map_or("?".to_string(), |r| format!("{:.0} % in use", ram_share(r, budget.aid_ram) * 100.0));
+    let commit_text = commit.map_or("?".to_string(), |(t, f)| format!("{f} of {t} MB free"));
     info!(
-        "memory budget: {} (GPU: this process uses {gpu_text}; RAM: {ram_text}); caches keep unused {:.0} s, at most {} per cache",
+        "memory budget: {} (GPU: this process uses {gpu_text}; RAM: {ram_text}; commit: {commit_text}); caches keep unused {:.0} s, at most {} per cache",
         if now_pressed { "near a budget, caches pressed" } else { "back under the budgets" },
         limits.secs,
         limits.max

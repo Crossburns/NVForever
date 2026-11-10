@@ -177,3 +177,16 @@ Eight `player.setpos` jumps across WastelandNV, 20 s apart
   engine's own cache keep times (nvf_assets release.rs), not Remix.
 - ab_ret15 (Goodsprings, no travel): 50.7 fps, private 15.98 GB, VRAM 10.61 GB, picture
   mean difference 0.85/255.
+
+## 2026-11-10 15:00, upload census and commit pressure (tele2)
+
+- Census (`NVF_REMIX_MEMLOG=1`, Goodsprings): textures uploaded to Remix by folder:
+  landscape 1302 MB/319, architecture 594/248, clutter 490/201, bale 372/124, unnamed
+  (generated LOD and land weights) 255/326, sneeze 253/80, dungeons 182/44,
+  spiffyskytrooper 165/13. No interface textures among them: what Remix holds is the world
+  it draws, so its 3.9 GB of material textures is the picture, not waste.
+- The caches' memory budget (memory_budget.rs) also presses on the machine's commit:
+  over 85 % of the commit limit in use (on this machine under 6.8 GB free), as allocations
+  fail when commit runs out whatever RAM is free. tele2: pressed at about 180 s (commit
+  6785 of 46515 MB free, GPU 85.7 %); peak 20.3 GB, end 18.4 GB, as tele1 here, where the
+  GPU signal pressed as well; on a machine with less commit to spare it presses sooner.
